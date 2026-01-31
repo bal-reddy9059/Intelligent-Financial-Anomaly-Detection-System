@@ -31,22 +31,6 @@ Why SafePayAI Stood Out
 - 👩‍💻 User-Centric Design: Created a responsive UI with Google Sign-In, dashboards, and real-time alerts.
 
 
----
-
-### 🏆 DigiPay Pro NPCI Competition Highlights
-![Award Ceremony](https://imgur.com/suSs4H5.png)
-
-
-*Our team receiving the award at IIT Bombay Techfest 2024.*
-
----
-
-
-![Photo with Coordinator](https://imgur.com/XdLtx1I.png)
-
-
-*Team SafePayAI with the event coordinator at the IIT Bombay Techfest.*
-
 
 
 
