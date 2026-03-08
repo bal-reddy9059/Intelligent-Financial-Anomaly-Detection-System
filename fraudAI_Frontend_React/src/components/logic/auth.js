@@ -43,9 +43,10 @@ export const handleGoogleSignIn = async () => {
           email: user.email,
           photoURL: user.photoURL,
           upiId: upiId,
+          balance: 50000,
           createdAt: serverTimestamp(),
-          transactionDetails: user_friendly,       // Save user-friendly transaction details
-          modelData: model_processed               // Save model-processed transaction details
+          transactionDetails: user_friendly,
+          modelData: model_processed
         });
 
         console.log("New user created with UPI ID:", upiId);

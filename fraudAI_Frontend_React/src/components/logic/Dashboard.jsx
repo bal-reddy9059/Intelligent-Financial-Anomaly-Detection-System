@@ -2,38 +2,22 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth, db } from "./firebase.js";
-import { signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { signOut, onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import Header from "./Header.jsx";
 import SidebarContent from "./SidebarContent";
-import { handleGoogleSignIn } from "./auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DollarSign, CreditCard, Activity, Zap } from 'lucide-react';
 import { motion } from "framer-motion";
 import { Line, LineChart, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
 
-const transactionData = [
-  { name: 'Jan', value: 400 },
-  { name: 'Feb', value: 300 },
-  { name: 'Mar', value: 600 },
-  { name: 'Apr', value: 800 },
-  { name: 'May', value: 500 },
-  { name: 'Jun', value: 700 },
-];
-
-const spendingData = [
-  { name: 'Food', value: 400 },
-  { name: 'Transport', value: 300 },
-  { name: 'Shopping', value: 300 },
-  { name: 'Bills', value: 200 },
-];
-
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
 const Dashboard = () => {
   const [user, setUser] = useState(null);
   const [upiId, setUpiId] = useState("");
-  const [balance, setBalance] = useState(0);
+  const [balance, setBalance] = useState(50000);
+  const [transactions, setTransactions] = useState([]);
 
   const handleSignOut = async () => {
     try {
@@ -46,96 +30,110 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-   
-    const checkUser = async () => {
-      const currentUser = auth.currentUser;
-      if (currentUser) {
-        setUser(currentUser);
-        const userRef = doc(db, "users", currentUser.uid);
-        const userDoc = await getDoc(userRef);
-        if (userDoc.exists()) {
-          setUpiId(userDoc.data().upiId);
-          setBalance(Math.floor(Math.random() * 10000));
-        }
-      }
-    };
-    checkUser();
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (!currentUser) return;
+      setUser(currentUser);
+
+      const userRef = doc(db, "users", currentUser.uid);
+      const userDoc = await getDoc(userRef);
+      if (!userDoc.exists()) return;
+
+      const userData = userDoc.data();
+      setUpiId(userData.upiId);
+      setBalance(userData.balance ?? 50000);
+
+      const txQuery = query(
+        collection(db, "transactions"),
+        where("senderUPI", "==", userData.upiId)
+      );
+      const txSnapshot = await getDocs(txQuery);
+      const txList = txSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setTransactions(txList);
+    });
+    return unsubscribe;
   }, []);
+
+  // Monthly chart: group real transactions by month abbreviation
+  const monthlyData = (() => {
+    const map = {};
+    transactions.forEach(tx => {
+      if (!tx.createdAt) return;
+      const date = new Date(tx.createdAt.seconds * 1000);
+      const key = date.toLocaleString('default', { month: 'short' });
+      map[key] = (map[key] || 0) + tx.amount;
+    });
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  })();
+
+  // Pie chart: group real transactions by remarks category
+  const spendingData = (() => {
+    const map = {};
+    transactions.forEach(tx => {
+      const cat = tx.remarks
+        ? tx.remarks.charAt(0).toUpperCase() + tx.remarks.slice(1)
+        : 'Other';
+      map[cat] = (map[cat] || 0) + tx.amount;
+    });
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  })();
+
+  // This month's total spending
+  const monthlySpending = (() => {
+    const now = new Date();
+    return transactions
+      .filter(tx => {
+        if (!tx.createdAt) return false;
+        const d = new Date(tx.createdAt.seconds * 1000);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      })
+      .reduce((sum, tx) => sum + tx.amount, 0);
+  })();
+
+  const cashback = transactions.reduce((sum, tx) => sum + tx.amount * 0.02, 0);
 
   const TransactionChart = () => (
     <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={transactionData}>
-        <XAxis 
-          dataKey="name" 
-          stroke="#888888" 
-          fontSize={12} 
-          tickLine={false} 
-          axisLine={false}
-        />
-        <YAxis
-          stroke="#888888"
-          fontSize={12}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(value) => `₹${value}`}
-        />
+      <LineChart data={monthlyData.length ? monthlyData : [{ name: 'No data', value: 0 }]}>
+        <XAxis dataKey="name" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+        <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `₹${v}`} />
         <Tooltip
-          content={({ active, payload }) => {
-            if (active && payload && payload.length) {
-              return (
-                <div className="bg-gray-800 border border-gray-700 p-2 rounded-lg">
-                  <p className="text-blue-400">{`₹${payload[0].value}`}</p>
-                </div>
-              );
-            }
-            return null;
-          }}
+          content={({ active, payload }) =>
+            active && payload?.length ? (
+              <div className="bg-gray-800 border border-gray-700 p-2 rounded-lg">
+                <p className="text-blue-400">{`₹${payload[0].value.toFixed(2)}`}</p>
+              </div>
+            ) : null
+          }
         />
-        <Line
-          type="monotone"
-          dataKey="value"
-          stroke="#3b82f6"
-          strokeWidth={2}
-          dot={false}
-        />
+        <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={false} />
       </LineChart>
     </ResponsiveContainer>
   );
 
-  const SpendingPieChart = () => (
-    <ResponsiveContainer width="100%" height={300}>
-      <PieChart>
-        <Pie
-          data={spendingData}
-          cx="50%"
-          cy="50%"
-          labelLine={false}
-          outerRadius={80}
-          fill="#8884d8"
-          dataKey="value"
-        >
-          {spendingData.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-          ))}
-        </Pie>
-        <Tooltip
-          content={({ active, payload }) => {
-            if (active && payload && payload.length) {
-              return (
+  const SpendingPieChart = () => {
+    const data = spendingData.length ? spendingData : [{ name: 'No transactions', value: 1 }];
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <PieChart>
+          <Pie cx="50%" cy="50%" labelLine={false} outerRadius={80} fill="#8884d8" dataKey="value" data={data}>
+            {data.map((_, index) => (
+              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            ))}
+          </Pie>
+          <Tooltip
+            content={({ active, payload }) =>
+              active && payload?.length ? (
                 <div className="bg-gray-800 border border-gray-700 p-2 rounded-lg">
-                  <p className="text-blue-400">{`${payload[0].name}: ₹${payload[0].value}`}</p>
+                  <p className="text-blue-400">{`${payload[0].name}: ₹${Number(payload[0].value).toFixed(2)}`}</p>
                 </div>
-              );
+              ) : null
             }
-            return null;
-          }}
-        />
-        <Legend 
-          formatter={(value, entry, index) => <span className="text-gray-400">{value}</span>}
-        />
-      </PieChart>
-    </ResponsiveContainer>
-  );
+          />
+          <Legend formatter={(value) => <span className="text-gray-400">{value}</span>} />
+        </PieChart>
+      </ResponsiveContainer>
+    );
+  };
 
   return (
     <div className="flex min-h-screen bg-gray-900 text-white">
@@ -143,8 +141,8 @@ const Dashboard = () => {
         <SidebarContent />
       </aside>
       <div className="flex-1 p-6 overflow-y-auto">
-        <Header user={user} onSignIn={handleGoogleSignIn} />
-        <motion.div 
+        <Header user={user} />
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
@@ -170,10 +168,10 @@ const Dashboard = () => {
         </motion.div>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {[
-            { title: "Total Balance", icon: DollarSign, value: balance.toFixed(2), color: "blue" },
-            { title: "Monthly Spending", icon: CreditCard, value: (balance * 0.3).toFixed(2), color: "green" },
-            { title: "Total Transactions", icon: Activity, value: transactionData.length, color: "purple" },
-            { title: "Cashback Earned", icon: Zap, value: (balance * 0.02).toFixed(2), color: "yellow" }
+            { title: "Total Balance", icon: DollarSign, value: `₹${balance.toFixed(2)}`, color: "blue" },
+            { title: "Monthly Spending", icon: CreditCard, value: `₹${monthlySpending.toFixed(2)}`, color: "green" },
+            { title: "Total Transactions", icon: Activity, value: transactions.length, color: "purple" },
+            { title: "Cashback Earned", icon: Zap, value: `₹${cashback.toFixed(2)}`, color: "yellow" }
           ].map((item, index) => (
             <motion.div
               key={item.title}
@@ -188,7 +186,7 @@ const Dashboard = () => {
                 </CardHeader>
                 <CardContent>
                   <div className={`text-2xl font-bold text-${item.color}-400`}>
-                    {item.title === "Total Transactions" ? item.value : `₹${item.value}`}
+                    {item.value}
                   </div>
                 </CardContent>
               </Card>
@@ -219,4 +217,3 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-

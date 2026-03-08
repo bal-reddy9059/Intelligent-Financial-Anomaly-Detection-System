@@ -18,36 +18,35 @@ const RecentTransactions = () => {
   const [transactions, setTransactions] = useState([]) // State to hold transactions
 
   useEffect(() => {
-    const fetchUserData = async () => {
-      const currentUser = auth.currentUser // Get the current user
-      if (currentUser) {
-        const userRef = doc(db, "users", currentUser.uid) // Reference to the user's document
-        const userDoc = await getDoc(userRef) // Fetch the user document
-        if (userDoc.exists()) {
-          setUser(userDoc.data()) // Set user data
-        } else {
-          console.error("User document does not exist")
-        }
-      } else {
-        console.log("No user is currently logged in")
-      }
-    }
+    const fetchData = async () => {
+      const currentUser = auth.currentUser
+      if (!currentUser) return
 
-    const fetchTransactions = async () => {
-      if (!user) return // Ensure user is defined
+      const userRef = doc(db, "users", currentUser.uid)
+      const userDoc = await getDoc(userRef)
+      if (!userDoc.exists()) {
+        console.error("User document does not exist")
+        return
+      }
+
+      const userData = userDoc.data()
+      setUser(userData)
 
       const transactionsCollection = collection(db, "transactions")
-      const transactionsQuery = query(transactionsCollection, where("senderUPI", "==", user.upiId)) // Fetch transactions for the current user's UPI ID
+      const transactionsQuery = query(
+        transactionsCollection,
+        where("senderUPI", "==", userData.upiId)
+      )
       const transactionSnapshot = await getDocs(transactionsQuery)
-      const transactionList = transactionSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+      const transactionList = transactionSnapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
       }))
       setTransactions(transactionList)
     }
 
-    fetchUserData().then(fetchTransactions) // Fetch user data and then transactions
-  }, [user]) // Dependency on user
+    fetchData()
+  }, []) // Run once on mount
 
   const filteredTransactions = transactions.filter(
     (transaction) =>

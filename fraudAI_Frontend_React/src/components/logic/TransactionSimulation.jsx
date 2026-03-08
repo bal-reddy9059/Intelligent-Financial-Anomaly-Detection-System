@@ -14,16 +14,24 @@ const TransactionSimulation = ({ upiId, amount, remarks, senderUPI, onClose }) =
     try {
       // Simulate transaction delay
       await new Promise(resolve => setTimeout(resolve, 3000));
-  
-      // Save to Firebase
-      await addDoc(collection(db, "transactions"), {
-        amount: Number(amount),
-        recipientUPI: upiId,
-        senderUPI: senderUPI,
-        remarks: remarks,
-        createdAt: serverTimestamp(),
-      });
-  
+
+      // Save to Firebase with a 10-second timeout
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Firestore timeout")), 10000)
+      );
+      await Promise.race([
+        addDoc(collection(db, "transactions"), {
+          amount: Number(amount),
+          recipientUPI: upiId,
+          senderUPI: senderUPI,
+          remarks: remarks,
+          status: "Completed",
+          type: "outgoing",
+          createdAt: serverTimestamp(),
+        }),
+        timeout,
+      ]);
+
       setCurrentStep("success");
     } catch (error) {
       console.error("Error processing transaction:", error);

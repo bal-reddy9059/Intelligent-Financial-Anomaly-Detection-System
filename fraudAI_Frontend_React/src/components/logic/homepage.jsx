@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Check, XCircle, HelpCircle, X } from 'lucide-react';
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import SidebarContent from './SidebarContent';
 import { auth, db } from "./firebase.js";
-import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs } from "firebase/firestore";
 import { cn } from "@/lib/utils";
 import TransactionSimulation from '../logic/TransactionSimulation'
@@ -5048,7 +5048,14 @@ import {
     }
     ]
     const handleSendMoney = () => {
-        // Pass the transaction details to the TransactionSimulation component
+        if (verificationStatus === "fraud") {
+            alert("Transaction blocked: This UPI ID has been flagged as fraudulent by our AI system. Please verify the recipient before proceeding.");
+            return;
+        }
+        if (verificationStatus !== "valid") {
+            alert("Please verify the recipient UPI ID before sending money.");
+            return;
+        }
         setShowSimulation(true);
     };
     const getRandomTransaction = () => {
@@ -5163,76 +5170,62 @@ import {
       
       
 
+    const isSigningIn = useRef(false);
+
     const handleGoogleSignIn = async () => {
+        if (isSigningIn.current) return;
+        isSigningIn.current = true;
         const provider = new GoogleAuthProvider();
         try {
-        const result = await signInWithPopup(auth, provider);
-        const loggedInUser = result.user;
-
-        if (loggedInUser) {
-            setUser(loggedInUser);
-            const userRef = doc(db, "users", loggedInUser.uid);
-            const userDoc = await getDoc(userRef);
-
-            if (!userDoc.exists()) {
-            const generatedUPIId = generateUPIId(loggedInUser.displayName || "user");
-            const { user_friendly, model_processed } = getRandomTransaction();
-            await setDoc(userRef, {
-                uid: loggedInUser.uid,
-                name: loggedInUser.displayName,
-                email: loggedInUser.email,
-                photoURL: loggedInUser.photoURL,
-                upiId: generatedUPIId,
-                createdAt: serverTimestamp(),
-                transactionDetails: user_friendly, // Save user-friendly transaction details
-                modelData: model_processed
-            });
-            setUpiId(generatedUPIId);
-            } else {
-            setUpiId(userDoc.data().upiId);
+            const result = await signInWithPopup(auth, provider);
+            const loggedInUser = result.user;
+            if (loggedInUser) {
+                const userRef = doc(db, "users", loggedInUser.uid);
+                const userDoc = await getDoc(userRef);
+                if (!userDoc.exists()) {
+                    const generatedUPIId = generateUPIId(loggedInUser.displayName || "user");
+                    const { user_friendly, model_processed } = getRandomTransaction();
+                    await setDoc(userRef, {
+                        uid: loggedInUser.uid,
+                        name: loggedInUser.displayName,
+                        email: loggedInUser.email,
+                        photoURL: loggedInUser.photoURL,
+                        upiId: generatedUPIId,
+                        balance: 50000,
+                        createdAt: serverTimestamp(),
+                        transactionDetails: user_friendly,
+                        modelData: model_processed
+                    });
+                    setUpiId(generatedUPIId);
+                } else {
+                    setUpiId(userDoc.data().upiId);
+                }
             }
-        }
         } catch (error) {
-        console.error("Google Sign-In Error:", error);
+            if (error.code !== 'auth/cancelled-popup-request' && error.code !== 'auth/popup-closed-by-user') {
+                console.error("Google Sign-In Error:", error);
+            }
+        } finally {
+            isSigningIn.current = false;
         }
     };
 
 
 
     useEffect(() => {
-        const checkUser = async () => {
-        const currentUser = auth.currentUser;
-        if (currentUser) {
-            setUser(currentUser);
-            const userRef = doc(db, "users", currentUser.uid);
-            const userDoc = await getDoc(userRef);
-            if (userDoc.exists()) {
-            setUpiId(userDoc.data().upiId);
-            }
-        }
-        };
-        checkUser();
-    }, []);
-
-    useEffect(() => {
-        const checkUser = async () => {
-            const currentUser = auth.currentUser; // Get the current user
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             if (currentUser) {
-                setUser(currentUser); // Set user state
-                const userRef = doc(db, "users", currentUser.uid); // Reference to the user's document
-                const userDoc = await getDoc(userRef); // Fetch the user document
+                setUser(currentUser);
+                const userRef = doc(db, "users", currentUser.uid);
+                const userDoc = await getDoc(userRef);
                 if (userDoc.exists()) {
-                    const userData = userDoc.data(); // Get the user data
-                    // Assuming userData.upiId is the UPI ID of the logged-in user
-                    setUser((prev) => ({ ...prev, upiId: userData.upiId })); // Set UPI ID in user state
-                } else {
-                    console.error("User document does not exist");
+                    setUpiId(userDoc.data().upiId);
                 }
             } else {
-                console.log("No user is currently logged in");
+                setUser(null);
             }
-        };
-        checkUser();
+        });
+        return () => unsubscribe();
     }, []);
 
     return (

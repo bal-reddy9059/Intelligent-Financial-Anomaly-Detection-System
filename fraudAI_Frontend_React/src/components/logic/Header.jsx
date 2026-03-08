@@ -16,7 +16,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import SidebarContent from './SidebarContent';
 
 
-const Header = ({ user, onSignIn }) => {
+const Header = ({ user }) => {
     return (
         <header className="sticky top-0 z-10 backdrop-blur-xl bg-black/20 border-b border-white/10">
               <div className="flex items-center justify-between px-6 py-4">
@@ -33,7 +33,7 @@ const Header = ({ user, onSignIn }) => {
                   </Sheet>
                   <div className="flex items-center md:hidden">
                     <CreditCard className="h-8 w-8 text-blue-400" />
-                    <span className="ml-2 text-xl font-bold text-blue-400">safepayAI</span>
+                    <span className="ml-2 text-xl font-bold text-blue-400">SafePayAI</span>
                   </div>
                 </div>
                 <div className="flex items-center space-x-4">

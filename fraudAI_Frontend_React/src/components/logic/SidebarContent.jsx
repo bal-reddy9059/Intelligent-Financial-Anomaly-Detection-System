@@ -1,24 +1,37 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { cn } from "@/lib/utils";
 import { Button} from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { auth } from './firebase';
+import { signOut } from 'firebase/auth';
 
-import { 
-  Home, 
-  Send, 
-  History, 
-  FileText, 
-  Users, 
-  Settings, 
-  HelpCircle as Help, 
-  CreditCard, 
-  Search, 
- 
-  LogOut 
+import {
+  Home,
+  Send,
+  History,
+  FileText,
+  Users,
+  Settings,
+  HelpCircle as Help,
+  CreditCard,
+  Search,
+
+  LogOut
 } from 'lucide-react';
 
 export default function SidebarContent() {
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      navigate('/');
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
+
   const navItems = [
     { icon: Home, label: "Dashboard", path: "/dashboard" },
     { icon: Send, label: "Send Money", path: "/send-money" },
@@ -34,7 +47,7 @@ export default function SidebarContent() {
       <div className="p-6">
         <div className="flex items-center mb-8">
           <CreditCard className="h-8 w-8 text-blue-400" />
-          <span className="ml-2 text-xl font-bold text-blue-400">PaySafeAI</span>
+          <span className="ml-2 text-xl font-bold text-blue-400">SafePayAI</span>
         </div>
         <div className="relative mb-6">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-white/50" />
@@ -61,8 +74,9 @@ export default function SidebarContent() {
         </nav>
       </div>
       <div className="mt-auto p-6 border-t border-white/10">
-        <Button 
-          variant="ghost" 
+        <Button
+          variant="ghost"
+          onClick={handleLogout}
           className="w-full justify-start text-red-400 hover:text-red-300 hover:bg-red-500/10"
         >
           <LogOut className="mr-2 h-4 w-4" />

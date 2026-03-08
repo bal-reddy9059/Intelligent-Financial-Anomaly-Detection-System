@@ -1,9 +1,29 @@
-import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './components/logic/firebase';
 import Homepage from './components/logic/homepage';
 import Dashboard from './components/logic/Dashboard';
-import PredictForm from '../PredictForm'
 import Recent from './components/logic/Recent'
+import Statements from './components/logic/Statements'
+import Beneficiaries from './components/logic/Beneficiaries'
+import SettingsPage from './components/logic/Settings'
+import HelpSupport from './components/logic/HelpSupport'
+
+const PrivateRoute = ({ element }) => {
+  const [authState, setAuthState] = useState('loading');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthState(user ? 'authenticated' : 'unauthenticated');
+    });
+    return unsubscribe;
+  }, []);
+
+  if (authState === 'loading') return <div className="min-h-screen bg-gray-900" />;
+  return authState === 'authenticated' ? element : <Navigate to="/" replace />;
+};
+
 const RouteTitleUpdater = () => {
   const location = useLocation();
 
@@ -23,7 +43,7 @@ const RouteTitleUpdater = () => {
     document.title = title;
   }, [location]);
 
-  return null; // This component does not render anything
+  return null;
 };
 
 const App = () => {
@@ -32,16 +52,15 @@ const App = () => {
       <RouteTitleUpdater />
       <Routes>
         <Route path="/" element={<Homepage />} />
-        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/send-money" element={<Homepage />} />
-        <Route path="/transactions" element={<Recent />} />
-        <Route path="/statements" element={<Homepage />} />
-        <Route path="/beneficiaries" element={<Homepage />} />
-        <Route path="/settings" element={<PredictForm />} />
-        <Route path="/help-support" element={<Homepage />} />
+        <Route path="/dashboard" element={<PrivateRoute element={<Dashboard />} />} />
+        <Route path="/transactions" element={<PrivateRoute element={<Recent />} />} />
+        <Route path="/statements" element={<PrivateRoute element={<Statements />} />} />
+        <Route path="/beneficiaries" element={<PrivateRoute element={<Beneficiaries />} />} />
+        <Route path="/settings" element={<PrivateRoute element={<SettingsPage />} />} />
+        <Route path="/help-support" element={<PrivateRoute element={<HelpSupport />} />} />
       </Routes>
     </Router>
-    
   );
 };
 
