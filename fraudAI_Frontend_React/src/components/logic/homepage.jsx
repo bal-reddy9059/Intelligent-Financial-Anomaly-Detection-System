@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Check, XCircle, HelpCircle, X } from 'lucide-react';
+import { useLocation } from "react-router-dom";
+import { ArrowLeft, Check, XCircle, HelpCircle, X, Shield, ShieldX, Lightbulb, Loader2, User, Activity } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Header from "./Header";
@@ -25,10 +26,17 @@ import {
 
 
     export default function Homepage() {
+        const location = useLocation();
         const [showPopup, setShowPopup] = useState(false); // State for managing the pop-up visibility
-        const [transactionData, setTransactionData] = useState([]); 
+        const [transactionData, setTransactionData] = useState([]);
         const [remarks,setRemarks]=useState()
         const [showSimulation, setShowSimulation] = useState(false);
+        const [isVerifying, setIsVerifying] = useState(false);
+        const [fraudProbability, setFraudProbability] = useState(null);
+        const [featureAnalysis, setFeatureAnalysis] = useState([]);
+        const [aiInsight, setAiInsight] = useState("");
+        const [recipientName, setRecipientName] = useState("");
+        const [showBlockedModal, setShowBlockedModal] = useState(false);
     
         const remarkOptions = [
             { value: "rent", label: "Rent" },
@@ -5047,13 +5055,21 @@ import {
         }
     }
     ]
+    // Pre-fill from beneficiaries navigation state
+    useEffect(() => {
+        if (location.state?.recipientUPI) {
+            setRecipientUpiId(location.state.recipientUPI);
+            if (location.state.recipientName) setRecipientName(location.state.recipientName);
+        }
+    }, [location.state]);
+
     const handleSendMoney = () => {
         if (verificationStatus === "fraud") {
-            alert("Transaction blocked: This UPI ID has been flagged as fraudulent by our AI system. Please verify the recipient before proceeding.");
+            setShowBlockedModal(true);
             return;
         }
         if (verificationStatus !== "valid") {
-            alert("Please verify the recipient UPI ID before sending money.");
+            setShowBlockedModal(true);
             return;
         }
         setShowSimulation(true);
@@ -5094,30 +5110,31 @@ import {
     
 
     const handleVerifyUPI = async () => {
-        if (!upiId.trim()) {
+        if (!recipientUpiId.trim()) {
           setVerificationStatus("invalid");
           return;
         }
-      
+        setIsVerifying(true);
+        setFraudProbability(null);
+        setFeatureAnalysis([]);
+        setAiInsight("");
+
         try {
-          // Reference the "users" collection
           const usersRef = collection(db, "users");
-      
-          // Query the collection for a matching UPI ID
           const q = query(usersRef, where("upiId", "==", recipientUpiId));
           const querySnapshot = await getDocs(q);
-      
-          // Check if a matching document was found
+
           if (querySnapshot.empty) {
             setVerificationStatus("invalid");
+            setIsVerifying(false);
             return;
           }
-      
-          // Get the first document from the query results
-          const userDoc = querySnapshot.docs[0]; // Assuming UPI ID is unique
-          const modelData = userDoc.data().modelData;
-      
-          // Ensure features are in the correct order
+
+          const userDoc = querySnapshot.docs[0];
+          const userData = userDoc.data();
+          const modelData = userData.modelData;
+          if (userData.name && !recipientName) setRecipientName(userData.name);
+
           const features = [
             modelData["Transaction Amount"] || 0,
             modelData["Transaction Frequency"] || 0,
@@ -5142,28 +5159,37 @@ import {
             modelData["Geo-Location Flags_normal"] || 0,
             modelData["Geo-Location Flags_unusual"] || 0,
           ];
-      
-          console.log("Features sent to Flask:", features); // For debugging
-      
-          // Send the features to the Flask server
-          const response = await fetch("http://127.0.0.1:5000/predict", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ features }), // Wrap features in a JSON object
-          });
-      
-          const result = await response.json();
-      
-          if ( result.prediction[0] === 1) {
-            setVerificationStatus("fraud");
-          } else {
-            setVerificationStatus("valid");
+
+          // Try /check-single for enriched AI data, fall back to /predict
+          let isFraud = false;
+          try {
+            const aiResponse = await fetch("http://127.0.0.1:5000/check-single", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ features }),
+            });
+            const aiResult = await aiResponse.json();
+            isFraud = aiResult.prediction === 1 || aiResult.prediction?.[0] === 1;
+            if (aiResult.fraud_probability != null) setFraudProbability(aiResult.fraud_probability);
+            if (aiResult.feature_analysis) setFeatureAnalysis(aiResult.feature_analysis);
+            if (aiResult.ai_insight) setAiInsight(aiResult.ai_insight);
+          } catch {
+            const response = await fetch("http://127.0.0.1:5000/predict", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ features }),
+            });
+            const result = await response.json();
+            isFraud = result.prediction[0] === 1;
+            setFraudProbability(isFraud ? 80 : 15);
           }
+
+          setVerificationStatus(isFraud ? "fraud" : "valid");
         } catch (error) {
           console.error("Error verifying UPI ID:", error);
           setVerificationStatus("invalid");
+        } finally {
+          setIsVerifying(false);
         }
       };
       
@@ -5294,74 +5320,140 @@ import {
                               onChange={(e) => {
                                 setRecipientUpiId(e.target.value);
                                 setVerificationStatus(null);
+                                setFraudProbability(null);
+                                setFeatureAnalysis([]);
+                                setAiInsight("");
+                                setRecipientName("");
                               }}
+                              placeholder="e.g. name1234@yesbank"
                               className="flex-grow bg-white/5 border-white/10 text-white focus:ring-2 focus:ring-blue-500"
                             />
                             <Button
                               onClick={handleVerifyUPI}
-                              className="bg-blue-500 hover:bg-blue-600 text-white transition-colors duration-300"
+                              disabled={isVerifying}
+                              className="bg-blue-500 hover:bg-blue-600 text-white transition-colors duration-300 min-w-[90px]"
                             >
-                              Verify
+                              {isVerifying ? (
+                                <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Checking</>
+                              ) : "Verify"}
                             </Button>
                           </div>
-                          <AnimatePresence mode="wait">
-        {verificationStatus !== "idle" && (
-          <motion.div
-            key={verificationStatus}
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className={`p-4 rounded-lg ${
-              verificationStatus === "valid"
-                ? "bg-green-100 text-green-800"
-                : "bg-red-100 text-red-800"
-            }`}
-          >
-            {verificationStatus === "valid" && (
-              <div className="flex items-center gap-2">
-                <Check className="h-5 w-5 text-green-500" />
-                <span className="font-medium">Verified: UPI ID is valid</span>
-              </div>
-            )}
-            {verificationStatus === "fraud" && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-red-500" />
-                  <span className="font-medium">Fraudulent: Do not proceed</span>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSeeWhy}
-                  className="text-red-800 hover:bg-red-200"
-                >
-                  See Why <ChevronRight className="h-4 w-4 ml-1" />
-                </Button>
-              </div>
-            )}
-            {verificationStatus === "invalid" && (
-              <div className="flex items-center gap-2">
-                <XCircle className="h-5 w-5 text-red-500" />
-                <span className="font-medium">Invalid UPI ID</span>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      <AlertDialog open={isAlertOpen} onOpenChange={setIsAlertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Why is this UPI ID flagged as fraudulent?</AlertDialogTitle>
-            <AlertDialogDescription>
-              `This UPI ID has been associated with multiple reported scams and fraudulent activitiess strongly recommended not to proceed with any transactions using this ID.``
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction>Understood</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                          {/* Recipient name chip */}
+                          <AnimatePresence>
+                            {recipientName && verificationStatus === "valid" && (
+                              <motion.div
+                                initial={{ opacity: 0, y: -6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0 }}
+                                className="flex items-center gap-2 text-sm text-white/70"
+                              >
+                                <User className="h-4 w-4 text-blue-400" />
+                                <span>{recipientName}</span>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+
+                          <AnimatePresence mode="wait">
+                            {verificationStatus && verificationStatus !== "idle" && (
+                              <motion.div
+                                key={verificationStatus}
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                                className="space-y-3"
+                              >
+                                {/* Status Banner */}
+                                <div className={`p-3 rounded-lg flex items-center gap-2 ${
+                                  verificationStatus === "valid"
+                                    ? "bg-green-500/15 border border-green-500/30 text-green-300"
+                                    : verificationStatus === "fraud"
+                                    ? "bg-red-500/15 border border-red-500/30 text-red-300"
+                                    : "bg-orange-500/15 border border-orange-500/30 text-orange-300"
+                                }`}>
+                                  {verificationStatus === "valid" && <><Shield className="h-5 w-5 text-green-400 shrink-0" /><span className="font-medium">Recipient verified — safe to proceed</span></>}
+                                  {verificationStatus === "fraud" && <><ShieldX className="h-5 w-5 text-red-400 shrink-0" /><span className="font-medium">AI flagged as high-risk — do not proceed</span></>}
+                                  {verificationStatus === "invalid" && <><XCircle className="h-5 w-5 text-orange-400 shrink-0" /><span className="font-medium">UPI ID not found in system</span></>}
+                                </div>
+
+                                {/* AI Risk Score Gauge */}
+                                {fraudProbability != null && (
+                                  <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                      <Activity className="h-4 w-4 text-blue-400" />
+                                      <span className="text-sm font-medium text-white/80">AI Risk Score</span>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      {/* SVG Arc Gauge */}
+                                      <svg width="110" height="64" viewBox="0 0 110 64">
+                                        <path d="M 10 60 A 45 45 0 0 1 100 60" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="10" strokeLinecap="round" />
+                                        {(() => {
+                                          const p = Math.min(100, Math.max(0, fraudProbability));
+                                          const angle = Math.PI * (1 - p / 100);
+                                          const cx = 55, cy = 60, r = 45;
+                                          const x2 = cx + r * Math.cos(angle);
+                                          const y2 = cy - r * Math.sin(angle);
+                                          const color = p >= 70 ? "#ef4444" : p >= 40 ? "#f59e0b" : "#22c55e";
+                                          return p > 0 ? (
+                                            <path
+                                              d={`M 10 60 A 45 45 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`}
+                                              fill="none"
+                                              stroke={color}
+                                              strokeWidth="10"
+                                              strokeLinecap="round"
+                                            />
+                                          ) : null;
+                                        })()}
+                                        <text x="55" y="52" textAnchor="middle" fill="white" fontSize="18" fontWeight="bold">
+                                          {fraudProbability}%
+                                        </text>
+                                      </svg>
+                                      <div className="flex-1 space-y-1">
+                                        <div className={`text-lg font-bold ${fraudProbability >= 70 ? "text-red-400" : fraudProbability >= 40 ? "text-yellow-400" : "text-green-400"}`}>
+                                          {fraudProbability >= 70 ? "High Risk" : fraudProbability >= 40 ? "Medium Risk" : "Low Risk"}
+                                        </div>
+                                        <p className="text-xs text-white/50">Based on 22 behavioral and transaction features</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* AI Insight */}
+                                {aiInsight && (
+                                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 flex gap-2">
+                                    <Lightbulb className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                                    <p className="text-sm text-white/80">{aiInsight}</p>
+                                  </div>
+                                )}
+
+                                {/* Feature Analysis */}
+                                {featureAnalysis.length > 0 && (
+                                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
+                                    <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">Risk Feature Breakdown</p>
+                                    {featureAnalysis.slice(0, 5).map((feat, i) => (
+                                      <div key={i} className="space-y-1">
+                                        <div className="flex items-center justify-between text-xs">
+                                          <span className={feat.suspicious ? "text-red-300" : "text-white/60"}>
+                                            {feat.feature.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                                            {feat.suspicious && <span className="ml-1 text-red-400">⚠</span>}
+                                          </span>
+                                          <span className={feat.suspicious ? "text-red-400 font-medium" : "text-white/40"}>
+                                            {feat.z_score}σ
+                                          </span>
+                                        </div>
+                                        <div className="w-full bg-white/10 rounded-full h-1.5">
+                                          <div
+                                            className={`h-1.5 rounded-full transition-all ${feat.suspicious ? "bg-red-400" : "bg-blue-400"}`}
+                                            style={{ width: `${Math.min(100, feat.z_score * 20)}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </motion.div>
     
                         <motion.div
@@ -5434,56 +5526,129 @@ import {
             </div>
           )}
     
+          {/* Blocked Transaction Modal */}
+          <AnimatePresence>
+            {showBlockedModal && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-50"
+              >
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  className="bg-[#1e1b4b] border border-red-500/30 rounded-2xl shadow-2xl max-w-sm w-full m-4 overflow-hidden"
+                >
+                  <div className="p-6 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                        <ShieldX className="h-6 w-6 text-red-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-white">
+                          {verificationStatus === "fraud" ? "Transaction Blocked" : "Verification Required"}
+                        </h3>
+                        <p className="text-sm text-white/50">
+                          {verificationStatus === "fraud" ? "High fraud risk detected" : "Please verify the UPI ID first"}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-sm text-white/70">
+                      {verificationStatus === "fraud"
+                        ? "Our AI has flagged this recipient as high-risk based on behavioral analysis. Proceeding could expose you to fraud. Please double-check the UPI ID."
+                        : "You need to verify the recipient's UPI ID before sending money. Click Verify to run an AI safety check."}
+                    </p>
+                    {fraudProbability != null && verificationStatus === "fraud" && (
+                      <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center gap-3">
+                        <span className="text-2xl font-bold text-red-400">{fraudProbability}%</span>
+                        <span className="text-sm text-white/60">fraud probability score</span>
+                      </div>
+                    )}
+                    <Button
+                      onClick={() => setShowBlockedModal(false)}
+                      className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                    >
+                      Understood
+                    </Button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* AI Risk Details Popup (legacy — replaced by inline feature analysis) */}
           <AnimatePresence>
             {showPopup && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50"
+                className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-50"
               >
                 <motion.div
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0.9, opacity: 0 }}
-                  className="bg-white rounded-lg shadow-xl max-w-md w-full m-4 overflow-hidden"
+                  className="bg-[#1e1b4b] border border-white/10 rounded-2xl shadow-2xl max-w-md w-full m-4 overflow-hidden"
                 >
-                  <div className="flex justify-between items-center p-4 border-b border-gray-200">
-                    <h2 className="text-2xl font-bold text-gray-800">Transaction Details</h2>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setShowPopup(false)}
-                      className="text-gray-500 hover:text-gray-700"
-                    >
-                      <X className="h-6 w-6" />
+                  <div className="flex justify-between items-center p-4 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <ShieldX className="h-5 w-5 text-red-400" />
+                      <h2 className="text-lg font-bold text-white">Why was this flagged?</h2>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => setShowPopup(false)} className="text-white/50 hover:text-white">
+                      <X className="h-5 w-5" />
                     </Button>
                   </div>
-                  <div className="p-6 max-h-[60vh] overflow-y-auto">
-                    {transactionData.length > 0 ? (
-                      <ul className="space-y-4">
-                        {transactionData.map(([key, value], index) => (
-                          <motion.li
-                            key={key}
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: index * 0.1 }}
-                            className="bg-gray-50 p-3 rounded-md"
+                  <div className="p-5 max-h-[60vh] overflow-y-auto space-y-3">
+                    {featureAnalysis.length > 0 ? (
+                      <>
+                        {aiInsight && (
+                          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 flex gap-2 mb-4">
+                            <Lightbulb className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                            <p className="text-sm text-white/80">{aiInsight}</p>
+                          </div>
+                        )}
+                        {featureAnalysis.map((feat, i) => (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: i * 0.05 }}
+                            className={`p-3 rounded-lg border ${feat.suspicious ? "bg-red-500/10 border-red-500/20" : "bg-white/5 border-white/10"}`}
                           >
-                            <span className="font-semibold text-gray-700">{key}:</span>{" "}
-                            <span className="text-gray-600">{value}</span>
-                          </motion.li>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className={`text-sm font-medium ${feat.suspicious ? "text-red-300" : "text-white/70"}`}>
+                                {feat.feature.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                              </span>
+                              {feat.suspicious && <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">Suspicious</span>}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-white/10 rounded-full h-1.5">
+                                <div className={`h-1.5 rounded-full ${feat.suspicious ? "bg-red-400" : "bg-blue-400"}`} style={{ width: `${Math.min(100, feat.z_score * 20)}%` }} />
+                              </div>
+                              <span className="text-xs text-white/40">{feat.z_score}σ</span>
+                            </div>
+                          </motion.div>
+                        ))}
+                      </>
+                    ) : transactionData.length > 0 ? (
+                      <ul className="space-y-2">
+                        {transactionData.map(([key, value], index) => (
+                          <li key={key} className="bg-white/5 border border-white/10 p-3 rounded-lg">
+                            <span className="text-sm font-semibold text-white/70">{key}:</span>{" "}
+                            <span className="text-sm text-white/50">{String(value)}</span>
+                          </li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="text-gray-600">No data found</p>
+                      <p className="text-white/50 text-sm">No analysis data available.</p>
                     )}
                   </div>
-                  <div className="p-4 bg-gray-50 border-t border-gray-200">
-                    <Button
-                      onClick={() => setShowPopup(false)}
-                      className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-md transition-all duration-300"
-                    >
+                  <div className="p-4 border-t border-white/10">
+                    <Button onClick={() => setShowPopup(false)} className="w-full bg-blue-500 hover:bg-blue-600 text-white">
                       Close
                     </Button>
                   </div>

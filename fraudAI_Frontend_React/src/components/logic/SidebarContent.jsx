@@ -1,8 +1,7 @@
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { cn } from "@/lib/utils";
 import { Button} from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { auth } from './firebase';
 import { signOut } from 'firebase/auth';
 
@@ -15,13 +14,21 @@ import {
   Settings,
   HelpCircle as Help,
   CreditCard,
-  Search,
-
-  LogOut
+  LogOut,
+  Upload,
+  BarChart2,
+  Play,
+  Activity,
+  GitCompare,
+  ScanSearch,
+  Layers,
+  Brain,
+  Microscope,
 } from 'lucide-react';
 
 export default function SidebarContent() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleLogout = async () => {
     try {
@@ -42,6 +49,18 @@ export default function SidebarContent() {
     { icon: Help, label: "Help & Support", path: "/help-support" },
   ];
 
+  const mlNavItems = [
+    { icon: Upload, label: "Upload Data", path: "/upload-data" },
+    { icon: BarChart2, label: "Explore Data", path: "/explore-data" },
+    { icon: Play, label: "Run Detection", path: "/run-detection" },
+    { icon: Activity, label: "Results", path: "/detection-results" },
+    { icon: GitCompare, label: "Model Comparison", path: "/model-comparison" },
+    { icon: ScanSearch, label: "Check Transaction", path: "/check-transaction" },
+    { icon: Layers, label: "Batch Check", path: "/batch-check" },
+    { icon: Brain, label: "AI Hub", path: "/ai-hub" },
+    { icon: Microscope, label: "Feature Insights", path: "/feature-insights" },
+  ];
+
   return (
     <>
       <div className="p-6">
@@ -49,29 +68,52 @@ export default function SidebarContent() {
           <CreditCard className="h-8 w-8 text-blue-400" />
           <span className="ml-2 text-xl font-bold text-blue-400">SafePayAI</span>
         </div>
-        <div className="relative mb-6">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-white/50" />
-          <Input 
-            type="text" 
-            placeholder="Quick search..." 
-            className="pl-9 w-full bg-white/5 border-white/10 text-white placeholder:text-white/50 focus:bg-white/10"
-          />
-        </div>
         <nav className="space-y-1">
-          {navItems.map((item) => (
-            <Link to={item.path} key={item.label}>
-              <Button
-                variant="ghost"
-                className={cn(
-                  "w-full justify-start text-white/70 hover:text-white hover:bg-white/10"
-                )}
-              >
-                <item.icon className="mr-2 h-4 w-4" />
-                {item.label}
-              </Button>
-            </Link>
-          ))}
+          {navItems.map((item) => {
+            const isActive = location.pathname === item.path;
+            return (
+              <Link to={item.path} key={item.label}>
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "w-full justify-start hover:text-white hover:bg-white/10",
+                    isActive
+                      ? "text-white bg-white/10 font-semibold"
+                      : "text-white/70"
+                  )}
+                >
+                  <item.icon className="mr-2 h-4 w-4" />
+                  {item.label}
+                </Button>
+              </Link>
+            );
+          })}
         </nav>
+
+        <div className="mt-4 pt-4 border-t border-white/10">
+          <p className="text-xs text-white/30 uppercase tracking-widest mb-2 px-1">ML Analytics</p>
+          <nav className="space-y-1">
+            {mlNavItems.map((item) => {
+              const isActive = location.pathname === item.path;
+              return (
+                <Link to={item.path} key={item.label}>
+                  <Button
+                    variant="ghost"
+                    className={cn(
+                      "w-full justify-start hover:text-white hover:bg-white/10",
+                      isActive
+                        ? "text-white bg-blue-500/20 border border-blue-500/30 font-semibold"
+                        : "text-white/70"
+                    )}
+                  >
+                    <item.icon className="mr-2 h-4 w-4" />
+                    {item.label}
+                  </Button>
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
       </div>
       <div className="mt-auto p-6 border-t border-white/10">
         <Button

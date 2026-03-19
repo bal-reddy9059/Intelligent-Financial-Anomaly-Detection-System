@@ -4,7 +4,7 @@ import { CheckCircle, XCircle, Loader2, ArrowRight, X } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from './firebase';
-const TransactionSimulation = ({ upiId, amount, remarks, senderUPI, onClose }) => {
+const TransactionSimulation = ({ upiId, amount, remarks, senderUPI, fraudVerdict, onClose }) => {
   const [currentStep, setCurrentStep] = useState('details')
   const [isLoading, setIsLoading] = useState(false)
 
@@ -28,6 +28,7 @@ const TransactionSimulation = ({ upiId, amount, remarks, senderUPI, onClose }) =
           status: "Completed",
           type: "outgoing",
           createdAt: serverTimestamp(),
+          fraudVerdict: fraudVerdict ?? "SAFE",
         }),
         timeout,
       ]);
