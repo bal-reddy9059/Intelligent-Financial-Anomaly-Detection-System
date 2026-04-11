@@ -61,6 +61,7 @@ function getAiRecommendation(results, keys) {
 export default function ModelComparison() {
   const [user, setUser] = useState(null);
   const [results, setResults] = useState(null);
+  const [comparisonData, setComparisonData] = useState(null);
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
@@ -70,13 +71,19 @@ export default function ModelComparison() {
   }, []);
 
   useEffect(() => {
-    axios.get(`${API}/results`)
-      .then((res) => {
-        const data = res.data;
-        if (!Object.keys(data).length) { setError("No results found. Run detection first."); return; }
-        setResults(data);
-      })
-      .catch(() => setError("Could not load results. Run detection first."));
+    Promise.allSettled([
+      axios.get(`${API}/results`),
+      axios.get(`${API}/model-comparison`),
+    ]).then(([resultsRes, compRes]) => {
+      if (resultsRes.status === "fulfilled") {
+        const data = resultsRes.value.data;
+        if (Object.keys(data).length) setResults(data);
+        else setError("No results found. Run detection first.");
+      } else {
+        setError("Could not load results. Run detection first.");
+      }
+      if (compRes.status === "fulfilled") setComparisonData(compRes.value.data);
+    });
   }, []);
 
   if (!results && !error) return (
@@ -330,6 +337,48 @@ export default function ModelComparison() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Top Feature Importance from /model-comparison */}
+              {comparisonData?.rf_feature_importance_top10?.length > 0 && (
+                <Card className="bg-gray-800 border-gray-700">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base text-cyan-400">Top 10 RF Feature Importances</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {comparisonData.rf_feature_importance_top10.map((f, i) => (
+                      <div key={i}>
+                        <div className="flex justify-between text-xs mb-0.5">
+                          <span className="text-gray-300 truncate">{f.feature}</span>
+                          <span className="text-cyan-400 font-mono ml-2">{f.importance_pct?.toFixed(2)}%</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-cyan-500" style={{ width: `${Math.min(100, f.importance_pct)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* AI Summary from /model-comparison */}
+              {comparisonData?.ai_summary && (
+                <Card className="bg-blue-500/5 border-blue-500/20">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-blue-400 flex items-center gap-2">
+                      <Brain className="h-4 w-4" /> AI Model Summary
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-gray-300 leading-relaxed">{comparisonData.ai_summary}</p>
+                    {comparisonData.best_model && (
+                      <p className="text-xs text-green-400 mt-2">
+                        Best model: {MODEL_LABELS[comparisonData.best_model] ?? comparisonData.best_model}
+                        {comparisonData.best_score != null ? ` (score: ${comparisonData.best_score.toFixed(4)})` : ""}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               <div className="flex justify-end pt-2">
                 <Button onClick={() => navigate("/check-transaction")}

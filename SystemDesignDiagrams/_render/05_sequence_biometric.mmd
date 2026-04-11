@@ -1,0 +1,48 @@
+sequenceDiagram
+    actor User
+    participant React as React App
+    participant WebAuthn as WebAuthn API
+    participant WinHello as Windows Hello / Face ID
+    participant LocalStore as localStorage
+    participant Firestore as Firestore DB
+
+    User->>React: Click Confirm Transaction
+    React-->>User: Auth Choice Screen — 3 options
+
+    alt Option 1 — Fingerprint / Face ID
+        User->>React: Click Fingerprint/Face ID
+        React->>WebAuthn: isUserVerifyingPlatformAuthenticatorAvailable()
+        WebAuthn-->>React: true/false (hardware check)
+        React->>WebAuthn: navigator.credentials.get({ allowCredentials: [] })
+        WebAuthn->>WinHello: Prompt biometric scan
+        WinHello-->>WebAuthn: Scan result
+        WebAuthn-->>React: PublicKeyCredential (success) or DOMException (fail)
+        React-->>User: ✅ Verified OR ❌ Try again
+
+    else Option 2 — Pattern Lock
+        User->>React: Click Pattern Lock
+        React-->>User: Show 3×3 dot grid
+
+        alt No pattern saved yet
+            User->>React: Draw pattern (first time)
+            React-->>User: Confirm — draw again
+            React->>LocalStore: Save as safepay_pattern
+            React-->>User: ✅ Pattern saved
+        else Pattern already exists
+            User->>React: Draw pattern
+            React->>LocalStore: Load safepay_pattern
+            LocalStore-->>React: Saved dot sequence
+            React->>React: Compare drawn vs saved (min 4 dots)
+            React-->>User: ✅ Match OR ❌ Wrong pattern
+        end
+
+    else Option 3 — PIN
+        User->>React: Click Enter PIN
+        User->>React: Type 4-digit PIN
+        React->>Firestore: Verify PIN hash
+        Firestore-->>React: Match / No match
+        React-->>User: ✅ Verified OR ❌ Wrong PIN
+    end
+
+    React->>Firestore: addDoc transactions payload
+    React-->>User: ✅ Payment Complete

@@ -1,0 +1,73 @@
+graph LR
+    subgraph SECURITY["🔐 Security Layers"]
+        direction TB
+        S1["🚫 Fraud UPI Blocklist\n40+ pre-flagged IDs\nInstant block — no API call"]
+        S2["👆 WebAuthn Biometric\nWindows Hello · Face ID\nFingerprint hardware"]
+        S3["🔒 Pattern Lock\n3×3 dot grid\nlocalStorage persist"]
+        S4["⚠️ Dark Pattern Scanner\n8 scam phrase patterns\nRemarks analysis"]
+        S5["⏱️ Velocity Guard\nCooling-off periods\nRepeat payment control"]
+        S6["👥 Community Reports\nCrowd-sourced fraud intel\nCorroboration voting"]
+    end
+
+    subgraph CLIENT["🌐 React 18 Frontend  :5173"]
+        direction TB
+        subgraph CORE["Core Payments  Week 1–4"]
+            P1["💳 Send Money\nFraud verify · Dark pattern\nTransaction simulation"]
+            P2["📊 Dashboard\nBalance · Trends · Charts"]
+            P3["🔔 Notifications\nReal-time fraud alerts"]
+        end
+        subgraph AIFEATURES["AI Features  Week 5–8"]
+            P4["🧠 Spending Coach\nCategory pie · 7-day trend\nChat · Insights"]
+            P5["👆 Biometric Guard\nKeystroke calibration\nProtection toggles"]
+            P6["🏆 Achievements\n20 badges · XP · Streak\nTrust scores"]
+        end
+        subgraph MLUI["ML Analytics Suite"]
+            P7["🔍 Check Transaction\nArc gauge · Risk badge"]
+            P8["📤 Upload & Detect\nQuick / Balanced / Precision"]
+            P9["🤖 AI Hub\nClusters · Trends · Explain"]
+        end
+    end
+
+    subgraph FIREBASE["🔥 Firebase Cloud"]
+        direction TB
+        AUTH["Firebase Auth\nGoogle Sign-In\nJWT session"]
+        subgraph FS["Firestore Collections"]
+            C1["users  transactions\nnotifications  cooldowns"]
+            C2["biometricProfiles  coachChats\nuserBadges  communityReports"]
+            C3["disputes  savingsGoals\nrecurringPayments  splitGroups"]
+        end
+        RULES["Security Rules\nPer-collection ACL\nUID-based access"]
+        AUTH --- FS
+        FS --- RULES
+    end
+
+    subgraph FLASK["⚗️ Flask API  :5000"]
+        direction TB
+        subgraph MLMODELS["ML Engine"]
+            RF["🌲 Random Forest\n22 features → P(fraud)\npre-trained 3.3MB pkl"]
+            IF["🔺 Isolation Forest\nUnsupervised anomaly\ncontamination=0.05"]
+            AE["🧬 Autoencoder\n22→8→22 architecture\nreconstruction error"]
+            GAN["⚡ GAN\nSynthetic data gen\nclass balancing"]
+        end
+        subgraph VOTE["Ensemble Voting"]
+            V1["RF × 0.5\n+ IF × 0.25\n+ AE × 0.25"]
+            V2["score ≥ 0.70 → BLOCK\n0.40–0.69 → REVIEW\n< 0.40 → APPROVE"]
+        end
+        RF & IF & AE --> V1 --> V2
+    end
+
+    CLIENT -->|"Firestore SDK\ngetDocs · addDoc · onSnapshot"| FIREBASE
+    CLIENT -->|"axios HTTP POST\n/check-single · /predict\n/spending-coach · /fraud-forecast"| FLASK
+    CLIENT --> SECURITY
+    FLASK -->|"verdict + score + explanation"| CLIENT
+
+    style CLIENT fill:#0f2744,stroke:#3b82f6,color:#bfdbfe
+    style FIREBASE fill:#431407,stroke:#f97316,color:#fed7aa
+    style FLASK fill:#052e16,stroke:#22c55e,color:#bbf7d0
+    style SECURITY fill:#2e1065,stroke:#8b5cf6,color:#ede9fe
+    style CORE fill:#0c4a6e,stroke:#38bdf8,color:#e0f2fe
+    style AIFEATURES fill:#064e3b,stroke:#34d399,color:#d1fae5
+    style MLUI fill:#1e1b4b,stroke:#818cf8,color:#e0e7ff
+    style MLMODELS fill:#1a2e05,stroke:#65a30d,color:#ecfccb
+    style VOTE fill:#042f2e,stroke:#0d9488,color:#ccfbf1
+    style FS fill:#431407,stroke:#fb923c,color:#fed7aa

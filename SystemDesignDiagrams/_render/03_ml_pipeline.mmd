@@ -1,0 +1,56 @@
+flowchart TD
+    subgraph DATAGEN["Phase 1 — Data Generation"]
+        RAW["Raw Transaction Data\nCSV / Firestore"]
+        GAN_G["GAN Generator\nnoise → synthetic fraud"]
+        GAN_D["GAN Discriminator\nreal vs synthetic"]
+        SYNTH["Synthetic Dataset\nbalanced fraud + legitimate"]
+        RAW --> GAN_D
+        GAN_G -->|"synthetic samples"| GAN_D
+        GAN_D -->|"adversarial feedback"| GAN_G
+        GAN_G --> SYNTH
+    end
+
+    subgraph PREP["Phase 2 — Feature Engineering"]
+        MERGE["Merge Real + Synthetic Data"]
+        CLEAN["Clean: nulls, outliers"]
+        NORM["Normalize: StandardScaler"]
+        SPLIT["Train 80% / Test 20%"]
+        SYNTH --> MERGE
+        RAW --> MERGE
+        MERGE --> CLEAN --> NORM --> SPLIT
+    end
+
+    subgraph TRAIN["Phase 3 — Model Training"]
+        direction LR
+        RF_FIT["Random Forest\nn_estimators=100\nmax_depth=10\nGridSearchCV"]
+        IF_FIT["Isolation Forest\ncontamination=0.05\nunsupervised"]
+        AE_FIT["Autoencoder TF\n22→16→8→16→22\ntrained on legit only"]
+        SPLIT --> RF_FIT & IF_FIT & AE_FIT
+    end
+
+    subgraph INFER["Phase 4 — Real-time Inference"]
+        TX["New Transaction\n22 features extracted"]
+        SC["StandardScaler.transform"]
+        RF_P["RF predict_proba → rf_score"]
+        IF_P["IF decision_function → if_score"]
+        AE_P["AE reconstruct → error > p95?"]
+        VOTE["Weighted Vote\nRF×0.5 + IF×0.25 + AE×0.25"]
+        VERDICT["Final Verdict\nLOW / MEDIUM / HIGH"]
+        TX --> SC --> RF_P & IF_P & AE_P --> VOTE --> VERDICT
+    end
+
+    subgraph EXPLAIN["Phase 5 — Explainability"]
+        ZSCORE["Z-Score per feature"]
+        CF["Counterfactual analysis"]
+        NL["Natural Language Summary"]
+        VERDICT --> ZSCORE & CF
+        ZSCORE --> NL
+    end
+
+    TRAIN --> INFER --> EXPLAIN
+
+    style DATAGEN fill:#1e3a5f,stroke:#3b82f6,color:#e0f2fe
+    style PREP fill:#14532d,stroke:#22c55e,color:#dcfce7
+    style TRAIN fill:#4a044e,stroke:#a855f7,color:#f3e8ff
+    style INFER fill:#1e293b,stroke:#475569,color:#f8fafc
+    style EXPLAIN fill:#064e3b,stroke:#10b981,color:#d1fae5

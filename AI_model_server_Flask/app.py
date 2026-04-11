@@ -76,6 +76,11 @@ state = {
     "ae_threshold": None,
     "results": {},
     "detection_timestamp": None,
+    "score_history": [],      # audit log of all scored transactions (max 1000)
+    "feedback_log": [],       # human corrections submitted via /feedback
+    "velocity_store": {},     # per-user transaction velocity windows {user_id: [timestamps+amounts]}
+    "spending_baselines": {}, # per-user spending baseline stats {user_id: {mean, std, categories}}
+    "location_store": {},     # per-user last known location {user_id: {lat, lon, ts, city}}
 }
 
 
@@ -263,6 +268,22 @@ def _compute_fraud_probability(rf_pred, rf_proba, if_score=None, ae_error=None, 
     return fraud_prob
 
 
+def _log_score(transaction_id, verdict, fraud_prob, risk, source, top_suspicious=None):
+    """Append a scored transaction to the in-memory audit log (capped at 1000)."""
+    entry = {
+        "id": transaction_id,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "verdict": verdict,
+        "fraud_probability": fraud_prob,
+        "risk_level": risk,
+        "source": source,
+        "top_suspicious_features": top_suspicious or [],
+    }
+    state["score_history"].append(entry)
+    if len(state["score_history"]) > 1000:
+        state["score_history"] = state["score_history"][-1000:]
+
+
 def _detection_narrative(results_dict, total_rows, label_col_exists):
     """Generate an AI narrative summary of bulk detection results."""
     lines = []
@@ -337,10 +358,31 @@ def home():
             "POST /detect            — Run bulk anomaly detection",
             "GET  /ai-summary        — Post-detection AI narrative report",
             "GET  /explain/<index>   — Explain a specific transaction from dataset",
+            "POST /bulk-explain      — Batch explanations for multiple feature vectors",
             "GET  /risk-profile      — Risk percentile profile for given features",
             "GET  /features          — List loaded feature columns",
             "GET  /results           — Last detection results",
             "GET  /health            — Detailed system health",
+            "GET  /score-history     — Audit log of all API-scored transactions",
+            "GET  /watchlist         — Top-N highest risk transactions from dataset",
+            "POST /rule-engine       — Apply custom rule-based fraud checks",
+            "GET  /export-results    — Export last detection results as CSV",
+            "POST /feedback          — Submit human label correction for a transaction",
+            "GET  /feedback-stats    — Statistics on human feedback corrections",
+            "GET  /model-comparison  — Side-by-side model performance metrics",
+            "POST /velocity-check   — UPI velocity fraud: rapid multi-transaction detection",
+            "POST /amount-pattern   — Suspicious amount patterns (structuring, limit-probing)",
+            "POST /account-takeover — Account takeover risk scoring (device+location+behaviour)",
+            "POST /recipient-trust  — Recipient UPI ID trust score from transaction history",
+            "POST /spending-pattern — Personal spending baseline deviation analysis",
+            "GET  /network-analysis — Money mule / circular fund-flow detection in dataset",
+            "POST /transaction-purpose — AI transaction purpose classifier (P2P/merchant/bill/suspicious)",
+            "POST /geo-velocity      — Impossible travel / geo-velocity fraud detection",
+            "POST /risk-score-blend  — Unified composite risk score combining all available signals",
+            "GET  /fraud-calendar    — Hour/day fraud heatmap from dataset for scheduling rules",
+            "POST /device-risk       — Device fingerprint trust scoring (rooted/emulator/new install)",
+            "GET  /dataset-drift     — Feature distribution drift vs RF training baseline",
+            "POST /retraining-readiness — Model health check and retraining recommendation",
         ]
     })
 
@@ -399,9 +441,14 @@ def predict():
         suspicious_feats = [f for f in analysis if f["suspicious"]]
         insight = _ai_insight(suspicious_feats, risk, verdict="FRAUD" if rf_pred == 1 else "LEGITIMATE")
 
+        verdict = "FRAUD" if rf_pred == 1 else "LEGITIMATE"
+        top_susp = [f["feature"] for f in analysis if f["suspicious"]][:3]
+        tx_id = data.get("id", f"TX-{int(time.time()*1000)}")
+        _log_score(tx_id, verdict, fraud_prob, risk, "predict", top_susp)
+
         return jsonify({
             "prediction": [rf_pred],
-            "verdict": "FRAUD" if rf_pred == 1 else "LEGITIMATE",
+            "verdict": verdict,
             "fraud_probability": fraud_prob,
             "risk_level": risk,
             "ai_insight": insight,
@@ -554,6 +601,10 @@ def check_single():
 
         elapsed_ms = round((time.time() - t0) * 1000, 1)
 
+        top_susp = [f["feature"] for f in suspicious_feats][:3]
+        tx_id = data.get("id", f"TX-{int(time.time()*1000)}")
+        _log_score(tx_id, overall, fraud_prob, risk, "check-single", top_susp)
+
         return jsonify({
             "results": model_results,
             "overall_verdict": overall,
@@ -613,9 +664,12 @@ def batch_check():
             summary["fraud" if rf_pred == 1 else "legitimate"] += 1
             summary[f"{risk.lower()}_risk"] += 1
 
+            tx_id = tx.get("id", f"TX{i+1:04d}")
+            _log_score(tx_id, verdict, fraud_prob, risk, "batch-check", top_suspicious)
+
             results.append({
                 "index": i,
-                "transaction_id": tx.get("id", f"TX{i+1:04d}"),
+                "transaction_id": tx_id,
                 "verdict": verdict,
                 "fraud_probability": fraud_prob,
                 "risk_level": risk,
@@ -1901,6 +1955,3064 @@ def smart_threshold():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ─── Score History (Audit Log) ────────────────────────────────────────────────
+
+@app.route('/score-history', methods=['GET'])
+def score_history():
+    """
+    Return the in-memory audit log of all transactions scored through the API.
+    Supports pagination via ?page=1&per_page=50 and filtering via ?verdict=FRAUD or ?risk=HIGH.
+    """
+    try:
+        history = state["score_history"]
+
+        # Filters
+        verdict_filter = request.args.get("verdict", "").upper()
+        risk_filter = request.args.get("risk", "").upper()
+        source_filter = request.args.get("source", "").lower()
+
+        filtered = history
+        if verdict_filter in ("FRAUD", "LEGITIMATE"):
+            filtered = [h for h in filtered if h["verdict"] == verdict_filter]
+        if risk_filter in ("HIGH", "MEDIUM", "LOW"):
+            filtered = [h for h in filtered if h["risk_level"] == risk_filter]
+        if source_filter:
+            filtered = [h for h in filtered if h["source"] == source_filter]
+
+        # Pagination
+        per_page = min(int(request.args.get("per_page", 50)), 200)
+        page = max(1, int(request.args.get("page", 1)))
+        total = len(filtered)
+        start = (page - 1) * per_page
+        end = start + per_page
+        page_items = filtered[start:end]
+
+        # Summary stats
+        fraud_count = sum(1 for h in history if h["verdict"] == "FRAUD")
+        high_count = sum(1 for h in history if h["risk_level"] == "HIGH")
+
+        return jsonify({
+            "history": list(reversed(page_items)),  # newest first
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": max(1, (total + per_page - 1) // per_page),
+            },
+            "summary": {
+                "total_scored": len(history),
+                "fraud_count": fraud_count,
+                "legitimate_count": len(history) - fraud_count,
+                "high_risk_count": high_count,
+                "fraud_rate_pct": round(fraud_count / max(len(history), 1) * 100, 1),
+            },
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Watchlist ────────────────────────────────────────────────────────────────
+
+@app.route('/watchlist', methods=['GET'])
+def watchlist():
+    """
+    Return the top-N highest-risk transactions from the loaded dataset,
+    with full feature profiles and risk scores. Useful for fraud analysts.
+    Query params: ?n=20&model=isolation_forest&min_risk=HIGH
+    """
+    try:
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+        label_col = state["label_col"]
+        if_model = state.get("if_model")
+        scaler = state.get("scaler")
+
+        if df is None:
+            return jsonify({"error": "No dataset loaded. Upload a CSV first."}), 400
+
+        n = min(int(request.args.get("n", 20)), 100)
+        min_risk = request.args.get("min_risk", "").upper()
+
+        scores = None
+        preds = None
+
+        # Prefer IF scores if model is trained
+        if if_model and scaler and feature_cols:
+            X = df[feature_cols].values.astype(float)
+            X_scaled = scaler.transform(X)
+            raw = if_model.predict(X_scaled)
+            raw_scores = -if_model.score_samples(X_scaled)
+            scores = (raw_scores - raw_scores.min()) / (raw_scores.max() - raw_scores.min() + 1e-10)
+            preds = (raw == -1).astype(int)
+        elif feature_cols and len(feature_cols) == len(RF_FEATURE_NAMES):
+            # Fallback: use RF model
+            X = df[feature_cols].values.astype(float)
+            rf_probas = rf_model.predict_proba(X)[:, 1] if hasattr(rf_model, 'predict_proba') else \
+                        rf_model.predict(X).astype(float)
+            scores = rf_probas
+            preds = rf_model.predict(X).astype(int)
+        else:
+            return jsonify({"error": "No trained model available. Run /detect first or upload RF-compatible data."}), 400
+
+        # Build ranked list
+        top_idx = np.argsort(scores)[::-1][:n * 3]  # fetch extra to allow filtering
+        entries = []
+        for idx in top_idx:
+            score = float(scores[idx])
+            risk = _risk_level(int(score * 100))
+            if min_risk == "HIGH" and risk != "HIGH":
+                continue
+            if min_risk == "MEDIUM" and risk == "LOW":
+                continue
+
+            row = df.iloc[idx]
+            ground_truth = int(row[label_col]) if label_col and label_col in df.columns else None
+            feature_vals = {c: round(float(row[c]), 4) for c in feature_cols[:10]}
+
+            entries.append({
+                "dataset_index": int(idx),
+                "anomaly_score": round(score, 4),
+                "fraud_probability": int(score * 100),
+                "risk_level": risk,
+                "is_flagged": bool(preds[idx] == 1),
+                "ground_truth": ground_truth,
+                "ground_truth_label": ("FRAUD" if ground_truth == 1 else "LEGITIMATE") if ground_truth is not None else None,
+                "feature_values": feature_vals,
+            })
+            if len(entries) >= n:
+                break
+
+        high_count = sum(1 for e in entries if e["risk_level"] == "HIGH")
+        confirmed_fraud = sum(1 for e in entries if e["ground_truth"] == 1)
+
+        return jsonify({
+            "watchlist": entries,
+            "total": len(entries),
+            "high_risk_count": high_count,
+            "confirmed_fraud_count": confirmed_fraud if label_col else None,
+            "model_used": "isolation_forest" if if_model else "random_forest",
+            "ai_summary": (
+                f"Top {len(entries)} highest-risk transactions identified. "
+                f"{high_count} flagged as HIGH risk. "
+                + (f"{confirmed_fraud} confirmed fraud cases in ground truth." if label_col else
+                   "No ground-truth labels available for confirmation.")
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Rule Engine ──────────────────────────────────────────────────────────────
+
+@app.route('/rule-engine', methods=['POST'])
+def rule_engine():
+    """
+    Apply custom rule-based fraud checks on top of ML predictions.
+    Rules are evaluated in order; first matching rule wins.
+
+    Request body:
+    {
+      "features": { "Transaction Amount": 95000, "VPN or Proxy Usage": 1, ... }
+                  OR [v1, v2, ...] array matching RF_FEATURE_NAMES,
+      "rules": [
+        { "name": "High amount + VPN", "condition": "AND",
+          "checks": [
+            { "feature": "Transaction Amount", "op": "gt", "value": 50000 },
+            { "feature": "VPN or Proxy Usage",  "op": "eq", "value": 1 }
+          ],
+          "action": "BLOCK", "severity": "HIGH" }
+      ]
+    }
+    ops: gt, lt, gte, lte, eq, neq
+    """
+    try:
+        data = request.get_json() or {}
+        rules = data.get("rules", [])
+
+        # Resolve feature dict
+        raw = data.get("features", {})
+        if isinstance(raw, list):
+            feat_dict = {RF_FEATURE_NAMES[i]: float(raw[i]) for i in range(min(len(raw), len(RF_FEATURE_NAMES)))}
+        else:
+            feat_dict = {k: float(v) for k, v in raw.items() if isinstance(v, (int, float))}
+
+        def _eval_check(check, feat_dict):
+            feat = check.get("feature")
+            op = check.get("op", "gt")
+            threshold = float(check.get("value", 0))
+            val = float(feat_dict.get(feat, 0))
+            return {
+                "gt": val > threshold, "lt": val < threshold,
+                "gte": val >= threshold, "lte": val <= threshold,
+                "eq": val == threshold, "neq": val != threshold,
+            }.get(op, False)
+
+        triggered_rules = []
+        overall_action = "APPROVE"
+        overall_severity = "LOW"
+
+        severity_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+        for rule in rules:
+            name = rule.get("name", "Unnamed Rule")
+            condition = rule.get("condition", "AND").upper()
+            checks = rule.get("checks", [])
+            action = rule.get("action", "REVIEW")
+            severity = rule.get("severity", "MEDIUM").upper()
+
+            check_results = [_eval_check(c, feat_dict) for c in checks]
+            triggered = all(check_results) if condition == "AND" else any(check_results)
+
+            if triggered:
+                triggered_rules.append({
+                    "rule": name,
+                    "action": action,
+                    "severity": severity,
+                    "condition": condition,
+                    "checks_passed": sum(check_results),
+                    "checks_total": len(checks),
+                })
+                if severity_rank.get(severity, 0) > severity_rank.get(overall_severity, 0):
+                    overall_severity = severity
+                    overall_action = action
+
+        # Also run RF for ML signal
+        rf_verdict = None
+        rf_prob = None
+        if len(feat_dict) == len(RF_FEATURE_NAMES):
+            fv = np.array([feat_dict.get(n, 0.0) for n in RF_FEATURE_NAMES], dtype=float).reshape(1, -1)
+            rf_pred_val = int(rf_model.predict(fv)[0])
+            rf_prob = round(float(rf_model.predict_proba(fv)[0][1]) * 100, 1) if hasattr(rf_model, 'predict_proba') else None
+            rf_verdict = "FRAUD" if rf_pred_val == 1 else "LEGITIMATE"
+
+        # Final decision: rules take precedence; if no rules triggered, defer to ML
+        if not triggered_rules:
+            final_action = ("BLOCK" if rf_verdict == "FRAUD" else "APPROVE") if rf_verdict else "APPROVE"
+            final_severity = overall_severity
+            decision_source = "ml_model"
+        else:
+            final_action = overall_action
+            final_severity = overall_severity
+            decision_source = "rule_engine"
+
+        return jsonify({
+            "features_evaluated": feat_dict,
+            "rules_evaluated": len(rules),
+            "triggered_rules": triggered_rules,
+            "triggered_count": len(triggered_rules),
+            "final_action": final_action,
+            "final_severity": final_severity,
+            "decision_source": decision_source,
+            "ml_verdict": rf_verdict,
+            "ml_fraud_probability": rf_prob,
+            "summary": (
+                f"{len(triggered_rules)} rule(s) triggered out of {len(rules)} evaluated. "
+                f"Final action: {final_action} ({final_severity} severity) — decision by {decision_source}."
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Bulk Explain ─────────────────────────────────────────────────────────────
+
+@app.route('/bulk-explain', methods=['POST'])
+def bulk_explain():
+    """
+    Get feature-level explanations for multiple transactions in one request.
+    Accepts a list of feature vectors (array or named dict per transaction).
+
+    Request: { "transactions": [ {"id": "TX001", "features": [v1, v2, ...]}, ... ] }
+    Max 20 transactions per request.
+    """
+    try:
+        data = request.get_json() or {}
+        transactions = data.get("transactions", [])
+
+        if not transactions:
+            return jsonify({"error": "Provide a 'transactions' array"}), 400
+        if len(transactions) > 20:
+            return jsonify({"error": "Maximum 20 transactions per bulk-explain request"}), 400
+
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+        label_col = state["label_col"]
+        explanations = []
+
+        for tx in transactions:
+            tx_id = tx.get("id", f"TX-{int(time.time()*1000)}")
+            raw = tx.get("features", [])
+
+            if isinstance(raw, list):
+                fv = [float(v) for v in raw]
+                names = RF_FEATURE_NAMES if len(fv) == len(RF_FEATURE_NAMES) else (feature_cols or RF_FEATURE_NAMES)
+            else:
+                names = RF_FEATURE_NAMES
+                fv = [float(raw.get(n, 0)) for n in names]
+
+            X = np.array(fv, dtype=float).reshape(1, -1)
+
+            # RF prediction
+            rf_pred = None
+            rf_proba = None
+            if len(fv) == len(RF_FEATURE_NAMES):
+                rf_pred = int(rf_model.predict(X)[0])
+                if hasattr(rf_model, 'predict_proba'):
+                    rf_proba = float(rf_model.predict_proba(X)[0][1])
+
+            fraud_prob = _compute_fraud_probability(
+                rf_pred if rf_pred is not None else 0,
+                rf_proba
+            )
+            risk = _risk_level(fraud_prob)
+            verdict = "FRAUD" if rf_pred == 1 else "LEGITIMATE"
+
+            # Feature analysis
+            if df is not None and feature_cols and len(fv) == len(feature_cols):
+                analysis = _feature_analysis_from_df(fv, feature_cols, df, label_col)
+            else:
+                analysis = _feature_analysis_from_stats(fv, names, RF_FEATURE_STATS)
+
+            suspicious = [f for f in analysis if f["suspicious"]]
+            insight = _ai_insight(suspicious, risk, verdict=verdict)
+
+            explanations.append({
+                "id": tx_id,
+                "verdict": verdict,
+                "fraud_probability": fraud_prob,
+                "risk_level": risk,
+                "ai_insight": insight,
+                "suspicious_feature_count": len(suspicious),
+                "top_suspicious_features": [f["feature"] for f in suspicious[:3]],
+                "feature_analysis": analysis[:8],
+            })
+
+        fraud_count = sum(1 for e in explanations if e["verdict"] == "FRAUD")
+        return jsonify({
+            "explanations": explanations,
+            "total": len(explanations),
+            "fraud_count": fraud_count,
+            "legitimate_count": len(explanations) - fraud_count,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Export Results ───────────────────────────────────────────────────────────
+
+@app.route('/export-results', methods=['GET'])
+def export_results():
+    """
+    Export the last detection results as CSV-ready data.
+    Returns JSON with a 'csv_content' string and row-level records.
+    Query param: ?source=score_history exports audit log instead of detection results.
+    """
+    try:
+        source = request.args.get("source", "detection")
+
+        if source == "score_history":
+            history = state["score_history"]
+            if not history:
+                return jsonify({"error": "No scored transactions in history yet."}), 400
+
+            rows = []
+            for h in history:
+                rows.append({
+                    "id": h["id"],
+                    "timestamp": h["timestamp"],
+                    "verdict": h["verdict"],
+                    "fraud_probability": h["fraud_probability"],
+                    "risk_level": h["risk_level"],
+                    "source_endpoint": h["source"],
+                    "top_suspicious": "|".join(h.get("top_suspicious_features", [])),
+                })
+
+            df_export = pd.DataFrame(rows)
+            csv_content = df_export.to_csv(index=False)
+            return jsonify({
+                "source": "score_history",
+                "total_rows": len(rows),
+                "csv_content": csv_content,
+                "records": rows,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            })
+
+        # Default: export detection results
+        results = state["results"]
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+
+        if not results:
+            return jsonify({"error": "No detection results available. Run /detect first."}), 400
+        if df is None:
+            return jsonify({"error": "No dataset loaded."}), 400
+
+        # Gather scores from IF model if available
+        if_model = state.get("if_model")
+        scaler = state.get("scaler")
+        rows = []
+
+        if if_model and scaler and feature_cols:
+            X = df[feature_cols].values.astype(float)
+            X_scaled = scaler.transform(X)
+            raw = if_model.predict(X_scaled)
+            raw_scores = -if_model.score_samples(X_scaled)
+            scores = (raw_scores - raw_scores.min()) / (raw_scores.max() - raw_scores.min() + 1e-10)
+            preds = (raw == -1).astype(int)
+
+            label_col = state["label_col"]
+            for i in range(len(df)):
+                row_data = {
+                    "index": i,
+                    "anomaly_score": round(float(scores[i]), 4),
+                    "is_anomaly": int(preds[i]),
+                    "risk_level": _risk_level(int(scores[i] * 100)),
+                }
+                if label_col and label_col in df.columns:
+                    row_data["ground_truth"] = int(df.iloc[i][label_col])
+                for col in feature_cols[:10]:
+                    row_data[col] = round(float(df.iloc[i][col]), 4)
+                rows.append(row_data)
+        else:
+            return jsonify({"error": "No Isolation Forest model trained. Run /detect first."}), 400
+
+        df_export = pd.DataFrame(rows)
+        csv_content = df_export.to_csv(index=False)
+
+        return jsonify({
+            "source": "detection_results",
+            "total_rows": len(rows),
+            "csv_content": csv_content,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "detection_timestamp": state.get("detection_timestamp"),
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Human Feedback Loop ──────────────────────────────────────────────────────
+
+@app.route('/feedback', methods=['POST'])
+def submit_feedback():
+    """
+    Submit a human label correction for a previously scored transaction.
+    This builds a correction log for future model retraining or evaluation.
+
+    Request: {
+      "transaction_id": "TX001",
+      "model_verdict": "FRAUD",          // what the model said
+      "human_label": "LEGITIMATE",       // what the analyst determined
+      "analyst_id": "analyst_42",        // optional
+      "notes": "False positive — known merchant"  // optional
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        tx_id = data.get("transaction_id")
+        model_verdict = data.get("model_verdict", "").upper()
+        human_label = data.get("human_label", "").upper()
+
+        if not tx_id:
+            return jsonify({"error": "Provide 'transaction_id'"}), 400
+        if model_verdict not in ("FRAUD", "LEGITIMATE"):
+            return jsonify({"error": "'model_verdict' must be FRAUD or LEGITIMATE"}), 400
+        if human_label not in ("FRAUD", "LEGITIMATE"):
+            return jsonify({"error": "'human_label' must be FRAUD or LEGITIMATE"}), 400
+
+        is_correct = model_verdict == human_label
+        correction_type = None
+        if not is_correct:
+            correction_type = "false_positive" if model_verdict == "FRAUD" else "false_negative"
+
+        entry = {
+            "transaction_id": tx_id,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "model_verdict": model_verdict,
+            "human_label": human_label,
+            "is_correct": is_correct,
+            "correction_type": correction_type,
+            "analyst_id": data.get("analyst_id", "anonymous"),
+            "notes": data.get("notes", ""),
+        }
+        state["feedback_log"].append(entry)
+
+        return jsonify({
+            "accepted": True,
+            "transaction_id": tx_id,
+            "is_correct_prediction": is_correct,
+            "correction_type": correction_type,
+            "message": (
+                "Model prediction confirmed as correct." if is_correct else
+                f"Correction recorded: {correction_type.replace('_', ' ')} — "
+                f"model said {model_verdict}, analyst says {human_label}."
+            ),
+            "total_feedback_entries": len(state["feedback_log"]),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/feedback-stats', methods=['GET'])
+def feedback_stats():
+    """Return aggregate statistics on all submitted human feedback corrections."""
+    try:
+        log = state["feedback_log"]
+        if not log:
+            return jsonify({
+                "total": 0,
+                "message": "No feedback submitted yet. Use POST /feedback to submit corrections.",
+            })
+
+        total = len(log)
+        correct = sum(1 for e in log if e["is_correct"])
+        fp = sum(1 for e in log if e["correction_type"] == "false_positive")
+        fn = sum(1 for e in log if e["correction_type"] == "false_negative")
+        accuracy = round(correct / total * 100, 1)
+
+        # Per-analyst breakdown
+        analyst_counts = {}
+        for e in log:
+            aid = e["analyst_id"]
+            analyst_counts[aid] = analyst_counts.get(aid, 0) + 1
+
+        recent = sorted(log, key=lambda x: x["timestamp"], reverse=True)[:10]
+
+        return jsonify({
+            "total_feedback": total,
+            "correct_predictions": correct,
+            "incorrect_predictions": total - correct,
+            "model_accuracy_from_feedback": accuracy,
+            "false_positives": fp,
+            "false_negatives": fn,
+            "false_positive_rate": round(fp / max(total, 1) * 100, 1),
+            "false_negative_rate": round(fn / max(total, 1) * 100, 1),
+            "analysts": analyst_counts,
+            "recent_corrections": [e for e in recent if not e["is_correct"]],
+            "ai_insight": (
+                f"Model accuracy based on {total} analyst reviews: {accuracy}%. "
+                + (f"High false positive rate ({round(fp/total*100,1)}%) — consider raising fraud threshold." if fp > fn and fp > total * 0.2 else "")
+                + (f"High false negative rate ({round(fn/total*100,1)}%) — consider lowering fraud threshold." if fn > fp and fn > total * 0.2 else "")
+                + ("Model performing well based on analyst feedback." if accuracy >= 90 else "")
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Model Comparison ─────────────────────────────────────────────────────────
+
+@app.route('/model-comparison', methods=['GET'])
+def model_comparison():
+    """
+    Return a structured side-by-side comparison of all models run during
+    the last /detect call, plus RF feature importance summary.
+    Designed for the ModelComparison frontend component.
+    """
+    try:
+        results = state["results"]
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+
+        if not results:
+            return jsonify({"error": "No detection results available. Run /detect first."}), 400
+
+        comparison = []
+        for model_name, res in results.items():
+            total = res.get("total", len(df) if df is not None else 0)
+            detected = res.get("fraud_detected", 0)
+            rate = round(detected / max(total, 1) * 100, 2)
+
+            entry = {
+                "model": model_name,
+                "display_name": {
+                    "isolation_forest": "Isolation Forest",
+                    "autoencoder": "Autoencoder",
+                    "random_forest": "Random Forest",
+                }.get(model_name, model_name.replace("_", " ").title()),
+                "fraud_detected": detected,
+                "total_transactions": total,
+                "fraud_rate_pct": rate,
+                "precision": res.get("precision"),
+                "recall": res.get("recall"),
+                "f1_score": res.get("f1"),
+                "auc_roc": res.get("auc"),
+                "risk_tiers": res.get("risk_tiers", {}),
+                "has_labels": res.get("f1") is not None,
+                "top_anomalous_features": res.get("top_anomalous_features", []),
+            }
+
+            # Score distribution for charting
+            entry["score_distribution"] = res.get("score_distribution", [])
+
+            # ROC curve data (trimmed to 20 points for frontend)
+            fpr = res.get("roc_fpr", [])
+            tpr = res.get("roc_tpr", [])
+            if fpr and tpr:
+                step = max(1, len(fpr) // 20)
+                entry["roc_curve"] = [
+                    {"fpr": round(float(fpr[i]), 4), "tpr": round(float(tpr[i]), 4)}
+                    for i in range(0, len(fpr), step)
+                ]
+            else:
+                entry["roc_curve"] = []
+
+            comparison.append(entry)
+
+        # RF feature importance (always available)
+        rf_importances = []
+        if hasattr(rf_model, 'feature_importances_'):
+            imps = rf_model.feature_importances_.tolist()
+            rf_importances = sorted(
+                [{"feature": RF_FEATURE_NAMES[i], "importance_pct": round(float(imps[i]) * 100, 2)}
+                 for i in range(len(RF_FEATURE_NAMES))],
+                key=lambda x: x["importance_pct"], reverse=True
+            )[:10]
+
+        # Determine best model by F1, fallback to AUC
+        best_model = None
+        best_score = -1
+        for c in comparison:
+            score = c["f1_score"] or c["auc_roc"] or 0
+            if score > best_score:
+                best_score = score
+                best_model = c["model"]
+
+        return jsonify({
+            "comparison": comparison,
+            "models_count": len(comparison),
+            "best_model": best_model,
+            "best_score": round(best_score, 4) if best_score >= 0 else None,
+            "rf_feature_importance_top10": rf_importances,
+            "detection_timestamp": state.get("detection_timestamp"),
+            "ai_summary": (
+                f"Compared {len(comparison)} model(s) from last detection run. "
+                + (f"Best performer: {best_model} (score={round(best_score,3)})." if best_model else "")
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PHONEPE-STYLE AI FEATURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── Velocity Fraud Detection ─────────────────────────────────────────────────
+
+@app.route('/velocity-check', methods=['POST'])
+def velocity_check():
+    """
+    UPI-style velocity fraud detection. Tracks how many transactions a user
+    has made in recent time windows (1 min, 5 min, 1 hour, 24 hours) and
+    flags abnormal bursts indicative of bot activity, account compromise,
+    or mule behaviour.
+
+    Request:
+    {
+      "user_id": "user@upi",
+      "amount": 5000,
+      "timestamp": "2024-12-01T14:32:00Z",   // optional, defaults to now
+      "record": true                           // if true, log this transaction
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        user_id = data.get("user_id")
+        amount = float(data.get("amount", 0))
+        record = bool(data.get("record", True))
+
+        if not user_id:
+            return jsonify({"error": "Provide 'user_id'"}), 400
+
+        # Parse timestamp
+        ts_str = data.get("timestamp")
+        if ts_str:
+            try:
+                now = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except Exception:
+                now = datetime.utcnow()
+        else:
+            now = datetime.utcnow()
+
+        now_ts = now.timestamp()
+
+        store = state["velocity_store"]
+        if user_id not in store:
+            store[user_id] = []
+
+        history = store[user_id]
+
+        # Define velocity windows (seconds, label, max_allowed, max_amount)
+        windows = [
+            {"seconds": 60,      "label": "1 minute",  "max_count": 3,  "max_amount": 20000},
+            {"seconds": 300,     "label": "5 minutes", "max_count": 5,  "max_amount": 50000},
+            {"seconds": 3600,    "label": "1 hour",    "max_count": 15, "max_amount": 200000},
+            {"seconds": 86400,   "label": "24 hours",  "max_count": 50, "max_amount": 1000000},
+        ]
+
+        window_results = []
+        risk_signals = []
+
+        for w in windows:
+            cutoff = now_ts - w["seconds"]
+            recent = [e for e in history if e["ts"] >= cutoff]
+            count = len(recent)
+            total_amt = sum(e["amount"] for e in recent)
+
+            count_exceeded = count >= w["max_count"]
+            amount_exceeded = total_amt + amount > w["max_amount"]
+
+            if count_exceeded:
+                risk_signals.append(f"{count} transactions in {w['label']} (limit: {w['max_count']})")
+            if amount_exceeded:
+                risk_signals.append(f"Total amount ₹{total_amt+amount:,.0f} in {w['label']} exceeds ₹{w['max_amount']:,}")
+
+            window_results.append({
+                "window": w["label"],
+                "transaction_count": count,
+                "total_amount": round(total_amt, 2),
+                "count_limit": w["max_count"],
+                "amount_limit": w["max_amount"],
+                "count_exceeded": count_exceeded,
+                "amount_exceeded": amount_exceeded,
+            })
+
+        # Burst detection: 3+ transactions within 30 seconds
+        burst_cutoff = now_ts - 30
+        burst_txns = [e for e in history if e["ts"] >= burst_cutoff]
+        is_burst = len(burst_txns) >= 2
+        if is_burst:
+            risk_signals.append(f"Transaction burst: {len(burst_txns)+1} txns within 30 seconds (bot-like pattern)")
+
+        # Escalating amount pattern detection
+        recent_5 = sorted([e for e in history if e["ts"] >= now_ts - 3600], key=lambda x: x["ts"])[-5:]
+        is_escalating = False
+        if len(recent_5) >= 3:
+            amounts = [e["amount"] for e in recent_5]
+            diffs = [amounts[i+1] - amounts[i] for i in range(len(amounts)-1)]
+            if all(d > 0 for d in diffs):
+                is_escalating = True
+                risk_signals.append("Escalating transaction amounts detected — possible limit probing")
+
+        # Risk scoring
+        signal_count = len(risk_signals)
+        if signal_count == 0:
+            velocity_risk = "LOW"
+            action = "APPROVE"
+        elif signal_count <= 2:
+            velocity_risk = "MEDIUM"
+            action = "REVIEW"
+        else:
+            velocity_risk = "HIGH"
+            action = "BLOCK"
+
+        # Record this transaction in store
+        if record:
+            store[user_id].append({"ts": now_ts, "amount": amount})
+            # Keep only last 24h
+            cutoff_24h = now_ts - 86400
+            store[user_id] = [e for e in store[user_id] if e["ts"] >= cutoff_24h]
+
+        return jsonify({
+            "user_id": user_id,
+            "amount": amount,
+            "velocity_risk": velocity_risk,
+            "recommended_action": action,
+            "risk_signals": risk_signals,
+            "is_burst_detected": is_burst,
+            "is_escalating_amounts": is_escalating,
+            "window_analysis": window_results,
+            "total_user_history_count": len(store.get(user_id, [])),
+            "ai_summary": (
+                f"Velocity check for {user_id}: {velocity_risk} risk. "
+                + (f"Triggered signals: {'; '.join(risk_signals)}." if risk_signals
+                   else "No velocity anomalies detected. Transaction within normal frequency limits.")
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Suspicious Amount Pattern Detection ─────────────────────────────────────
+
+@app.route('/amount-pattern', methods=['POST'])
+def amount_pattern():
+    """
+    Detect suspicious transaction amount patterns used in UPI fraud:
+    - Structuring: amounts just below reporting limits (e.g. 9999 instead of 10000)
+    - Round-number suspicion in high amounts (10000, 50000)
+    - Repeated identical amounts (smurfing)
+    - Micro-transactions followed by large amount (account verification probing)
+    - Amount spikes vs user's historical average
+
+    Request: { "amount": 9999, "user_id": "user@upi", "user_avg_amount": 1500 }
+    """
+    try:
+        data = request.get_json() or {}
+        amount = float(data.get("amount", 0))
+        user_id = data.get("user_id", "")
+        user_avg = float(data.get("user_avg_amount", 0)) or None
+
+        if amount <= 0:
+            return jsonify({"error": "Provide a positive 'amount'"}), 400
+
+        patterns_detected = []
+        pattern_scores = []
+
+        # 1. Structuring: just below common thresholds
+        thresholds = [10000, 25000, 50000, 100000, 200000, 500000]
+        for limit in thresholds:
+            gap = limit - amount
+            if 0 < gap <= limit * 0.02:  # within 2% below threshold
+                patterns_detected.append({
+                    "pattern": "structuring",
+                    "detail": f"Amount ₹{amount:,.2f} is ₹{gap:,.2f} below reporting threshold ₹{limit:,}",
+                    "severity": "HIGH",
+                })
+                pattern_scores.append(35)
+                break
+
+        # 2. Round-number high-value (more suspicious at high amounts)
+        is_round = amount % 1000 == 0 or amount % 500 == 0
+        if is_round and amount >= 10000:
+            patterns_detected.append({
+                "pattern": "round_high_value",
+                "detail": f"Round amount ₹{amount:,.0f} — common in social engineering and advance-fee scams",
+                "severity": "MEDIUM",
+            })
+            pattern_scores.append(15)
+
+        # 3. Micro-transaction (possible account probing before large transfer)
+        if 0 < amount <= 10:
+            patterns_detected.append({
+                "pattern": "micro_transaction",
+                "detail": f"Very small amount ₹{amount:.2f} — may be recipient verification before large transfer",
+                "severity": "LOW",
+            })
+            pattern_scores.append(10)
+
+        # 4. Amount spike vs user's historical average
+        if user_avg and user_avg > 0:
+            spike_ratio = amount / user_avg
+            if spike_ratio >= 10:
+                patterns_detected.append({
+                    "pattern": "amount_spike",
+                    "detail": f"Amount is {spike_ratio:.1f}x user's average (₹{user_avg:,.2f}) — extreme spike",
+                    "severity": "HIGH",
+                })
+                pattern_scores.append(40)
+            elif spike_ratio >= 5:
+                patterns_detected.append({
+                    "pattern": "amount_spike",
+                    "detail": f"Amount is {spike_ratio:.1f}x user's average — significant spike",
+                    "severity": "MEDIUM",
+                })
+                pattern_scores.append(20)
+
+        # 5. Velocity store: check for repeated identical amounts (smurfing)
+        if user_id and user_id in state["velocity_store"]:
+            history = state["velocity_store"][user_id]
+            recent = [e for e in history if e["ts"] >= datetime.utcnow().timestamp() - 3600]
+            same_count = sum(1 for e in recent if abs(e["amount"] - amount) < 1)
+            if same_count >= 3:
+                patterns_detected.append({
+                    "pattern": "smurfing",
+                    "detail": f"Amount ₹{amount:,.2f} repeated {same_count} times in the past hour",
+                    "severity": "HIGH",
+                })
+                pattern_scores.append(30)
+
+        # 6. Unusual decimal (e.g. 1234.56 — atypical for organic transactions)
+        decimal_part = round(amount % 1, 2)
+        if decimal_part not in (0.0, 0.5) and amount > 100:
+            patterns_detected.append({
+                "pattern": "unusual_decimal",
+                "detail": f"Non-standard decimal amount ₹{amount:.2f} — may indicate automated/scripted transaction",
+                "severity": "LOW",
+            })
+            pattern_scores.append(8)
+
+        total_score = min(100, sum(pattern_scores))
+        risk = "HIGH" if total_score >= 50 else ("MEDIUM" if total_score >= 20 else "LOW")
+
+        return jsonify({
+            "amount": amount,
+            "user_id": user_id or None,
+            "patterns_detected": patterns_detected,
+            "pattern_count": len(patterns_detected),
+            "risk_score": total_score,
+            "risk_level": risk,
+            "recommended_action": "BLOCK" if risk == "HIGH" else ("REVIEW" if risk == "MEDIUM" else "APPROVE"),
+            "ai_summary": (
+                f"{len(patterns_detected)} suspicious amount pattern(s) detected for ₹{amount:,.2f}. "
+                f"Risk score: {total_score}/100 ({risk}). "
+                + (f"Patterns: {', '.join(p['pattern'] for p in patterns_detected)}."
+                   if patterns_detected else "Amount appears normal.")
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Account Takeover Detection ───────────────────────────────────────────────
+
+@app.route('/account-takeover', methods=['POST'])
+def account_takeover():
+    """
+    Multi-signal Account Takeover (ATO) risk scoring — a core PhonePe/UPI
+    AI safety feature. Combines device trust, location change, behavioural
+    shift and transaction context to produce a composite ATO risk score.
+
+    Request:
+    {
+      "user_id": "user@upi",
+      "is_new_device": true,
+      "is_new_location": true,
+      "device_trust_score": 0.2,       // 0 (untrusted) to 1 (trusted)
+      "location_change_km": 1200,       // distance from last known location
+      "time_since_last_login_hrs": 0.5, // very recent login = suspicious with other signals
+      "amount": 45000,
+      "is_high_risk_time": true,        // 2am-5am transactions
+      "failed_auth_attempts": 3,
+      "profile_change_recent": true,    // phone/email changed recently
+      "vpn_detected": false,
+      "user_avg_amount": 2000
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        user_id = data.get("user_id", "anonymous")
+
+        signals = []
+        score = 0
+
+        # Device trust
+        is_new_device = bool(data.get("is_new_device", False))
+        device_trust = float(data.get("device_trust_score", 1.0))
+        if is_new_device:
+            signals.append({"signal": "new_device", "weight": 25, "detail": "Transaction from an unrecognised device"})
+            score += 25
+        elif device_trust < 0.3:
+            signals.append({"signal": "low_device_trust", "weight": 15, "detail": f"Device trust score is low ({device_trust:.2f})"})
+            score += 15
+
+        # Location change
+        is_new_location = bool(data.get("is_new_location", False))
+        location_km = float(data.get("location_change_km", 0))
+        if location_km > 500:
+            signals.append({"signal": "geo_anomaly", "weight": 20, "detail": f"Location changed by {location_km:.0f} km from last known position"})
+            score += 20
+        elif is_new_location:
+            signals.append({"signal": "new_location", "weight": 12, "detail": "Transaction from an unrecognised location"})
+            score += 12
+
+        # Failed auth attempts
+        failed_auth = int(data.get("failed_auth_attempts", 0))
+        if failed_auth >= 5:
+            signals.append({"signal": "brute_force", "weight": 30, "detail": f"{failed_auth} failed authentication attempts — possible credential stuffing"})
+            score += 30
+        elif failed_auth >= 2:
+            signals.append({"signal": "auth_failures", "weight": 15, "detail": f"{failed_auth} failed auth attempts before this transaction"})
+            score += 15
+
+        # Profile change
+        if bool(data.get("profile_change_recent", False)):
+            signals.append({"signal": "profile_changed", "weight": 20, "detail": "Phone/email changed recently — common ATO step"})
+            score += 20
+
+        # High-risk time
+        if bool(data.get("is_high_risk_time", False)):
+            signals.append({"signal": "high_risk_time", "weight": 10, "detail": "Transaction at a high-risk time (2am–5am)"})
+            score += 10
+
+        # VPN
+        if bool(data.get("vpn_detected", False)):
+            signals.append({"signal": "vpn_proxy", "weight": 10, "detail": "VPN/proxy detected — identity masking"})
+            score += 10
+
+        # Amount spike vs user average
+        amount = float(data.get("amount", 0))
+        user_avg = float(data.get("user_avg_amount", 0))
+        if user_avg > 0 and amount > 0:
+            spike = amount / user_avg
+            if spike >= 20:
+                signals.append({"signal": "extreme_amount_spike", "weight": 25, "detail": f"Amount {spike:.0f}x above user average — atypical for legitimate use"})
+                score += 25
+            elif spike >= 10:
+                signals.append({"signal": "amount_spike", "weight": 15, "detail": f"Amount {spike:.0f}x above user average"})
+                score += 15
+
+        # Compound ATO scenario: new device + new location + high amount together
+        if is_new_device and is_new_location and amount > 10000:
+            signals.append({"signal": "compound_ato_pattern", "weight": 20, "detail": "Classic ATO signature: new device + new location + high-value transaction simultaneously"})
+            score += 20
+
+        score = min(100, score)
+        risk = "CRITICAL" if score >= 70 else ("HIGH" if score >= 50 else ("MEDIUM" if score >= 25 else "LOW"))
+        action = "BLOCK" if score >= 50 else ("REVIEW" if score >= 25 else "APPROVE")
+
+        recommended_steps = []
+        if score >= 70:
+            recommended_steps = ["Freeze account immediately", "Send OTP to registered mobile", "Require video KYC verification", "Alert fraud operations team"]
+        elif score >= 50:
+            recommended_steps = ["Require step-up authentication (OTP + PIN)", "Send suspicious activity alert to user", "Flag for manual review"]
+        elif score >= 25:
+            recommended_steps = ["Send in-app notification to user", "Require transaction PIN confirmation"]
+        else:
+            recommended_steps = ["Proceed normally"]
+
+        return jsonify({
+            "user_id": user_id,
+            "ato_risk_score": score,
+            "risk_level": risk,
+            "recommended_action": action,
+            "signals_detected": signals,
+            "signal_count": len(signals),
+            "recommended_steps": recommended_steps,
+            "ai_summary": (
+                f"ATO risk score: {score}/100 ({risk}) for user {user_id}. "
+                + (f"{len(signals)} anomalous signal(s): {', '.join(s['signal'] for s in signals)}. "
+                   if signals else "No ATO signals detected. ")
+                + f"Recommended: {action}."
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Recipient Trust Score ────────────────────────────────────────────────────
+
+@app.route('/recipient-trust', methods=['POST'])
+def recipient_trust():
+    """
+    Score the trustworthiness of a payment recipient (UPI ID) based on:
+    - Their appearance in the loaded fraud dataset (blacklist status, fraud rate)
+    - Recipient blacklist status and verification features from RF_FEATURE_STATS
+    - Transaction pattern signals from the request
+
+    Request:
+    {
+      "recipient_upi": "merchant@paytm",
+      "recipient_blacklist_status": 0,          // 0=clean, 1=blacklisted
+      "recipient_verification": "verified",      // "verified", "suspicious", "unknown"
+      "fraud_complaints_against": 0,            // number of complaints filed
+      "account_age_days": 30,                   // recipient account age
+      "past_successful_txns_with_user": 5,      // how many times user paid this recipient
+      "is_first_time_recipient": false
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        recipient_upi = data.get("recipient_upi", "unknown")
+
+        trust_score = 100  # start fully trusted, deduct for red flags
+        risk_flags = []
+        positive_signals = []
+
+        # Blacklist check
+        blacklist = int(data.get("recipient_blacklist_status", 0))
+        if blacklist == 1:
+            trust_score -= 60
+            risk_flags.append({"flag": "blacklisted", "severity": "CRITICAL", "detail": "Recipient UPI ID is on the fraud blacklist"})
+
+        # Verification status
+        verification = str(data.get("recipient_verification", "unknown")).lower()
+        if verification == "suspicious":
+            trust_score -= 30
+            risk_flags.append({"flag": "suspicious_verification", "severity": "HIGH", "detail": "Recipient failed verification checks"})
+        elif verification == "verified":
+            trust_score += 5
+            positive_signals.append("Recipient identity is verified")
+        else:
+            trust_score -= 10
+            risk_flags.append({"flag": "unverified", "severity": "LOW", "detail": "Recipient identity not verified"})
+
+        # Fraud complaints
+        complaints = int(data.get("fraud_complaints_against", 0))
+        if complaints >= 5:
+            trust_score -= 35
+            risk_flags.append({"flag": "high_complaint_count", "severity": "HIGH", "detail": f"{complaints} fraud complaints filed against this recipient"})
+        elif complaints >= 2:
+            trust_score -= 15
+            risk_flags.append({"flag": "complaints_present", "severity": "MEDIUM", "detail": f"{complaints} complaints on record"})
+        elif complaints == 0:
+            positive_signals.append("No fraud complaints on record")
+
+        # Account age
+        account_age = int(data.get("account_age_days", 365))
+        if account_age < 7:
+            trust_score -= 25
+            risk_flags.append({"flag": "very_new_account", "severity": "HIGH", "detail": f"Recipient account is only {account_age} day(s) old — common in scam accounts"})
+        elif account_age < 30:
+            trust_score -= 10
+            risk_flags.append({"flag": "new_account", "severity": "MEDIUM", "detail": f"Recipient account is {account_age} days old"})
+        elif account_age > 365:
+            trust_score += 5
+            positive_signals.append(f"Established account ({account_age} days old)")
+
+        # Past transactions with this user
+        past_txns = int(data.get("past_successful_txns_with_user", 0))
+        is_first_time = bool(data.get("is_first_time_recipient", True))
+        if past_txns >= 5:
+            trust_score += 15
+            positive_signals.append(f"{past_txns} successful past transactions with this recipient")
+        elif is_first_time:
+            trust_score -= 8
+            risk_flags.append({"flag": "first_time_recipient", "severity": "LOW", "detail": "First transaction with this recipient"})
+
+        # Dataset cross-reference (if dataset is loaded)
+        dataset_note = None
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+        if df is not None and "Recipient Blacklist Status" in feature_cols:
+            bl_col = "Recipient Blacklist Status"
+            label_col = state["label_col"]
+            if label_col:
+                try:
+                    fraud_bl_rate = float(df[df[label_col] == 1][bl_col].mean())
+                    dataset_note = f"In loaded dataset, {fraud_bl_rate*100:.1f}% of fraud cases had blacklisted recipients."
+                except Exception:
+                    pass
+
+        trust_score = max(0, min(100, trust_score))
+        risk = "CRITICAL" if trust_score < 20 else ("HIGH" if trust_score < 40 else ("MEDIUM" if trust_score < 65 else "LOW"))
+
+        return jsonify({
+            "recipient_upi": recipient_upi,
+            "trust_score": trust_score,
+            "trust_grade": "A" if trust_score >= 85 else ("B" if trust_score >= 65 else ("C" if trust_score >= 40 else ("D" if trust_score >= 20 else "F"))),
+            "risk_level": risk,
+            "recommended_action": "BLOCK" if risk == "CRITICAL" else ("REVIEW" if risk in ("HIGH", "MEDIUM") else "APPROVE"),
+            "risk_flags": risk_flags,
+            "positive_signals": positive_signals,
+            "dataset_insight": dataset_note,
+            "ai_summary": (
+                f"Recipient '{recipient_upi}' trust score: {trust_score}/100 (Grade: "
+                + ("A" if trust_score >= 85 else "B" if trust_score >= 65 else "C" if trust_score >= 40 else "D" if trust_score >= 20 else "F")
+                + f", {risk} risk). "
+                + (f"{len(risk_flags)} risk flag(s) detected." if risk_flags else "No significant risk flags.")
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Personal Spending Pattern Baseline ───────────────────────────────────────
+
+@app.route('/spending-pattern', methods=['POST'])
+def spending_pattern():
+    """
+    Analyse whether a transaction deviates from a user's personal spending
+    baseline. Supports two modes:
+    1. Register mode: submit historical transactions to build the baseline.
+    2. Check mode: score a new transaction against the stored baseline.
+
+    Request (register):
+    {
+      "mode": "register",
+      "user_id": "user@upi",
+      "transactions": [
+        {"amount": 500, "category": "food", "hour": 12},
+        {"amount": 2000, "category": "shopping", "hour": 18}
+      ]
+    }
+
+    Request (check):
+    {
+      "mode": "check",
+      "user_id": "user@upi",
+      "amount": 45000,
+      "category": "unknown",
+      "hour": 3
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        mode = data.get("mode", "check")
+        user_id = data.get("user_id")
+
+        if not user_id:
+            return jsonify({"error": "Provide 'user_id'"}), 400
+
+        baselines = state["spending_baselines"]
+
+        # ── Register mode ─────────────────────────────────────────────────────
+        if mode == "register":
+            txns = data.get("transactions", [])
+            if not txns:
+                return jsonify({"error": "Provide 'transactions' list in register mode"}), 400
+
+            amounts = [float(t.get("amount", 0)) for t in txns if t.get("amount", 0) > 0]
+            hours = [int(t.get("hour", 12)) for t in txns]
+            categories = [str(t.get("category", "other")).lower() for t in txns]
+
+            from collections import Counter
+            cat_counts = Counter(categories)
+            top_categories = [{"category": c, "count": n, "pct": round(n/len(categories)*100, 1)}
+                               for c, n in cat_counts.most_common(5)]
+
+            # Hour distribution: cluster into time-of-day bands
+            morning = sum(1 for h in hours if 6 <= h < 12)
+            afternoon = sum(1 for h in hours if 12 <= h < 18)
+            evening = sum(1 for h in hours if 18 <= h < 23)
+            night = sum(1 for h in hours if h < 6 or h >= 23)
+            total_h = max(len(hours), 1)
+
+            baselines[user_id] = {
+                "amount_mean": float(np.mean(amounts)) if amounts else 0,
+                "amount_std": float(np.std(amounts)) if len(amounts) > 1 else float(np.mean(amounts)) * 0.5,
+                "amount_p95": float(np.percentile(amounts, 95)) if amounts else 0,
+                "amount_max": float(np.max(amounts)) if amounts else 0,
+                "top_categories": top_categories,
+                "time_distribution": {
+                    "morning_pct": round(morning/total_h*100, 1),
+                    "afternoon_pct": round(afternoon/total_h*100, 1),
+                    "evening_pct": round(evening/total_h*100, 1),
+                    "night_pct": round(night/total_h*100, 1),
+                },
+                "transaction_count": len(txns),
+                "registered_at": datetime.utcnow().isoformat() + "Z",
+            }
+
+            return jsonify({
+                "mode": "register",
+                "user_id": user_id,
+                "baseline_registered": True,
+                "summary": baselines[user_id],
+                "message": f"Spending baseline registered for {user_id} using {len(txns)} transactions.",
+            })
+
+        # ── Check mode ────────────────────────────────────────────────────────
+        baseline = baselines.get(user_id)
+        amount = float(data.get("amount", 0))
+        category = str(data.get("category", "unknown")).lower()
+        hour = int(data.get("hour", datetime.utcnow().hour))
+
+        if baseline is None:
+            # No stored baseline — use dataset stats or RF_FEATURE_STATS as fallback
+            df = state["df"]
+            amount_col = find_amount_col(df) if df is not None else None
+            if df is not None and amount_col:
+                fallback_mean = float(df[amount_col].mean())
+                fallback_std = float(df[amount_col].std())
+            else:
+                fallback_mean = RF_FEATURE_STATS["Transaction Amount"]["mean"]
+                fallback_std = RF_FEATURE_STATS["Transaction Amount"]["std"]
+
+            baseline = {
+                "amount_mean": fallback_mean,
+                "amount_std": fallback_std,
+                "amount_p95": fallback_mean + 2 * fallback_std,
+                "top_categories": [],
+                "time_distribution": {"morning_pct": 30, "afternoon_pct": 35, "evening_pct": 25, "night_pct": 10},
+                "transaction_count": 0,
+            }
+            used_fallback = True
+        else:
+            used_fallback = False
+
+        deviations = []
+        deviation_score = 0
+
+        # Amount deviation
+        mean = baseline["amount_mean"]
+        std = max(baseline["amount_std"], 1.0)
+        p95 = baseline["amount_p95"]
+        z_amount = abs((amount - mean) / std)
+
+        if z_amount > 5:
+            deviations.append({"type": "extreme_amount", "z_score": round(z_amount, 2),
+                                "detail": f"Amount ₹{amount:,.2f} is {z_amount:.1f} standard deviations above user's mean (₹{mean:,.2f})"})
+            deviation_score += 50
+        elif z_amount > 3:
+            deviations.append({"type": "high_amount", "z_score": round(z_amount, 2),
+                                "detail": f"Amount ₹{amount:,.2f} is {z_amount:.1f}x user's typical range"})
+            deviation_score += 30
+        elif z_amount > 2:
+            deviations.append({"type": "above_normal", "z_score": round(z_amount, 2),
+                                "detail": f"Amount slightly above user's normal spending range"})
+            deviation_score += 15
+
+        if amount > p95:
+            deviations.append({"type": "above_p95", "detail": f"Amount exceeds user's 95th percentile (₹{p95:,.2f})"})
+            deviation_score += 10
+
+        # Category deviation
+        known_cats = [c["category"] for c in baseline.get("top_categories", [])]
+        if known_cats and category not in known_cats and category != "unknown":
+            deviations.append({"type": "unusual_category", "detail": f"Category '{category}' not in user's typical spending: {', '.join(known_cats[:3])}"})
+            deviation_score += 15
+
+        # Time deviation: night transaction for a typically day-time user
+        td = baseline.get("time_distribution", {})
+        night_pct = td.get("night_pct", 10)
+        if (hour < 5 or hour >= 23) and night_pct < 5:
+            deviations.append({"type": "unusual_time", "detail": f"Transaction at {hour:02d}:00 — user rarely transacts at night ({night_pct}% historical night activity)"})
+            deviation_score += 15
+
+        deviation_score = min(100, deviation_score)
+        risk = "HIGH" if deviation_score >= 50 else ("MEDIUM" if deviation_score >= 20 else "LOW")
+
+        return jsonify({
+            "mode": "check",
+            "user_id": user_id,
+            "amount": amount,
+            "category": category,
+            "hour": hour,
+            "deviation_score": deviation_score,
+            "risk_level": risk,
+            "recommended_action": "BLOCK" if risk == "HIGH" else ("REVIEW" if risk == "MEDIUM" else "APPROVE"),
+            "deviations": deviations,
+            "baseline_summary": {
+                "mean_amount": round(mean, 2),
+                "std_amount": round(std, 2),
+                "p95_amount": round(p95, 2),
+                "source": "fallback_dataset" if used_fallback else "user_registered",
+                "transaction_count": baseline.get("transaction_count", 0),
+            },
+            "ai_summary": (
+                f"Spending pattern analysis for {user_id}: deviation score {deviation_score}/100 ({risk} risk). "
+                + (f"{len(deviations)} deviation(s) from baseline: {'; '.join(d['detail'] for d in deviations)}."
+                   if deviations else "Transaction consistent with user's normal spending patterns.")
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Network / Money Mule Detection ──────────────────────────────────────────
+
+@app.route('/network-analysis', methods=['GET'])
+def network_analysis():
+    """
+    Detect money mule networks and suspicious fund-flow patterns in the
+    loaded dataset. Uses transaction frequency and blacklist co-occurrence
+    to identify circular flows, hub nodes, and mule chains.
+
+    Works on the loaded dataset's features. Most useful when dataset has:
+    Transaction Frequency, Recipient Blacklist Status, Past Fraudulent Behaviour Flags,
+    Social Trust Score features.
+    """
+    try:
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+        label_col = state["label_col"]
+
+        if df is None:
+            return jsonify({"error": "No dataset loaded. Upload a CSV first."}), 400
+
+        n = len(df)
+        analysis = {}
+
+        # ── Hub detection: high transaction frequency + low trust score ────────
+        freq_col = next((c for c in feature_cols if "frequency" in c.lower()), None)
+        trust_col = next((c for c in feature_cols if "trust" in c.lower()), None)
+        blacklist_col = next((c for c in feature_cols if "blacklist" in c.lower()), None)
+        fraud_flag_col = next((c for c in feature_cols if "fraudulent" in c.lower() or "past" in c.lower()), None)
+        complaint_col = next((c for c in feature_cols if "complaint" in c.lower()), None)
+
+        hub_count = 0
+        mule_count = 0
+        chain_count = 0
+
+        if freq_col and trust_col:
+            freq_vals = df[freq_col].values
+            trust_vals = df[trust_col].values
+
+            freq_threshold = float(np.percentile(freq_vals, 90))
+            trust_threshold = float(np.percentile(trust_vals, 10))
+
+            hub_mask = (freq_vals >= freq_threshold) & (trust_vals <= trust_threshold)
+            hub_count = int(hub_mask.sum())
+
+            analysis["hub_detection"] = {
+                "hub_node_count": hub_count,
+                "pct_of_dataset": round(hub_count / max(n, 1) * 100, 2),
+                "criteria": f"Transaction frequency >= p90 ({freq_threshold:.1f}) AND social trust score <= p10 ({trust_threshold:.2f})",
+                "fraud_rate_in_hubs": round(float(df.loc[hub_mask, label_col].mean() * 100), 1) if label_col and hub_mask.sum() > 0 else None,
+                "interpretation": (
+                    f"Identified {hub_count} potential hub nodes — accounts acting as central relays "
+                    "in a transaction network with low social trust scores."
+                ),
+            }
+
+        # ── Mule account detection: past fraud + blacklisted recipient + high freq ──
+        if blacklist_col and fraud_flag_col:
+            bl_vals = df[blacklist_col].values
+            ff_vals = df[fraud_flag_col].values
+
+            mule_mask = (bl_vals >= 0.5) & (ff_vals >= 0.5)
+            if freq_col:
+                mule_mask = mule_mask & (df[freq_col].values >= np.percentile(df[freq_col].values, 75))
+
+            mule_count = int(mule_mask.sum())
+            analysis["mule_accounts"] = {
+                "suspected_mule_count": mule_count,
+                "pct_of_dataset": round(mule_count / max(n, 1) * 100, 2),
+                "confirmed_fraud_pct": round(float(df.loc[mule_mask, label_col].mean() * 100), 1) if label_col and mule_mask.sum() > 0 else None,
+                "interpretation": (
+                    f"{mule_count} accounts exhibit classic mule behaviour: "
+                    "blacklisted recipient + past fraud history + high transaction frequency."
+                ),
+            }
+
+        # ── Layering detection: complaints + context anomalies ────────────────
+        context_col = next((c for c in feature_cols if "context" in c.lower()), None)
+        if complaint_col and context_col:
+            comp_vals = df[complaint_col].values
+            ctx_vals = df[context_col].values
+
+            comp_threshold = float(np.percentile(comp_vals, 85))
+            ctx_threshold = float(np.percentile(ctx_vals, 85))
+
+            layer_mask = (comp_vals >= comp_threshold) & (ctx_vals >= ctx_threshold)
+            chain_count = int(layer_mask.sum())
+            analysis["layering_patterns"] = {
+                "layering_count": chain_count,
+                "pct_of_dataset": round(chain_count / max(n, 1) * 100, 2),
+                "confirmed_fraud_pct": round(float(df.loc[layer_mask, label_col].mean() * 100), 1) if label_col and layer_mask.sum() > 0 else None,
+                "interpretation": (
+                    f"{chain_count} transactions show layering signals: "
+                    "high complaint count + high context anomaly score — typical of fund laundering chains."
+                ),
+            }
+
+        # ── Network risk summary ──────────────────────────────────────────────
+        total_suspicious = hub_count + mule_count + chain_count
+        network_risk = "HIGH" if total_suspicious > n * 0.15 else ("MEDIUM" if total_suspicious > n * 0.05 else "LOW")
+
+        # Feature availability note
+        features_used = [f for f in [freq_col, trust_col, blacklist_col, fraud_flag_col, complaint_col, context_col] if f]
+
+        return jsonify({
+            "dataset_size": n,
+            "network_analysis": analysis,
+            "total_suspicious_nodes": total_suspicious,
+            "network_risk_level": network_risk,
+            "features_used": features_used,
+            "ai_summary": (
+                f"Network analysis of {n:,} transactions: {total_suspicious} suspicious network nodes identified. "
+                f"Hub nodes: {hub_count}, Mule accounts: {mule_count}, Layering patterns: {chain_count}. "
+                f"Overall network risk: {network_risk}. "
+                + ("Recommend deep investigation of flagged accounts." if network_risk == "HIGH"
+                   else "Network activity within acceptable bounds.")
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Transaction Purpose Classifier ──────────────────────────────────────────
+
+@app.route('/transaction-purpose', methods=['POST'])
+def transaction_purpose():
+    """
+    AI-based transaction purpose classifier. Uses feature patterns to
+    classify a transaction into one of these categories:
+    P2P_PERSONAL, MERCHANT_PAYMENT, BILL_UTILITY, INVESTMENT, SUSPICIOUS_ADVANCE_FEE,
+    SUSPICIOUS_SOCIAL_ENGINEERING, SUSPICIOUS_SMURFING, UNKNOWN.
+
+    PhonePe uses similar classification to personalise UX and apply
+    category-specific fraud rules.
+
+    Request: { "features": [v1, v2, ...] }  OR named feature dict
+             + optional { "amount": 5000, "hour": 14, "is_merchant": false }
+    """
+    try:
+        data = request.get_json() or {}
+
+        # Resolve feature values
+        raw = data.get("features", {})
+        if isinstance(raw, list) and len(raw) == len(RF_FEATURE_NAMES):
+            feat = {RF_FEATURE_NAMES[i]: float(raw[i]) for i in range(len(RF_FEATURE_NAMES))}
+        elif isinstance(raw, dict):
+            feat = {k: float(v) for k, v in raw.items()}
+        else:
+            feat = {}
+
+        # Helper to safely get feature value
+        def fv(name, default=0.0):
+            return float(feat.get(name, data.get(name, default)))
+
+        amount          = fv("Transaction Amount", data.get("amount", 0))
+        frequency       = fv("Transaction Frequency")
+        blacklist       = fv("Recipient Blacklist Status")
+        trust           = fv("Social Trust Score")
+        vpn             = fv("VPN or Proxy Usage")
+        device_fp       = fv("Device Fingerprinting")
+        past_fraud      = fv("Past Fraudulent Behavior Flags")
+        complaints      = fv("Fraud Complaints Count")
+        context_anom    = fv("Transaction Context Anomalies")
+        merchant_mm     = fv("Merchant Category Mismatch")
+        norm_amount     = fv("Normalized Transaction Amount")
+        high_risk_time  = fv("High-Risk Transaction Times")
+        is_merchant     = bool(data.get("is_merchant", False))
+        hour            = int(data.get("hour", 12))
+
+        # Classification rule-set (scored per category)
+        scores = {
+            "P2P_PERSONAL": 0,
+            "MERCHANT_PAYMENT": 0,
+            "BILL_UTILITY": 0,
+            "INVESTMENT": 0,
+            "SUSPICIOUS_ADVANCE_FEE": 0,
+            "SUSPICIOUS_SOCIAL_ENGINEERING": 0,
+            "SUSPICIOUS_SMURFING": 0,
+        }
+        explanations = {}
+
+        # P2P personal: moderate amount, high trust, low frequency, clean
+        if trust > 0.6 and blacklist < 0.1 and complaints < 1 and amount < 20000:
+            scores["P2P_PERSONAL"] += 40
+        if frequency < 5 and past_fraud < 0.1:
+            scores["P2P_PERSONAL"] += 15
+
+        # Merchant: is_merchant flag, low trust requirement, potential mismatch
+        if is_merchant:
+            scores["MERCHANT_PAYMENT"] += 50
+        if merchant_mm < 0.2 and amount > 100:
+            scores["MERCHANT_PAYMENT"] += 20
+        if 9 <= hour <= 21:  # typical business hours
+            scores["MERCHANT_PAYMENT"] += 10
+
+        # Bill/utility: round amounts, recurring, moderate amount
+        if amount % 100 == 0 and 100 <= amount <= 10000:
+            scores["BILL_UTILITY"] += 25
+        if frequency >= 3 and amount < 5000:
+            scores["BILL_UTILITY"] += 15
+
+        # Investment: large round amounts, verified recipient, low risk
+        if amount >= 10000 and amount % 1000 == 0 and trust > 0.7 and blacklist < 0.1:
+            scores["INVESTMENT"] += 35
+        if norm_amount > 0.7 and past_fraud < 0.1:
+            scores["INVESTMENT"] += 15
+
+        # Advance fee scam: large amount, new recipient, high risk time, low trust
+        if amount >= 5000 and trust < 0.3 and high_risk_time > 0.5:
+            scores["SUSPICIOUS_ADVANCE_FEE"] += 40
+        if blacklist > 0.3 or complaints > 2:
+            scores["SUSPICIOUS_ADVANCE_FEE"] += 30
+        if context_anom > 0.5 and vpn > 0.3:
+            scores["SUSPICIOUS_ADVANCE_FEE"] += 20
+
+        # Social engineering: unusual time, device anomaly, VPN, moderate amount
+        if device_fp > 0.5 and vpn > 0.4 and high_risk_time > 0.5:
+            scores["SUSPICIOUS_SOCIAL_ENGINEERING"] += 45
+        if past_fraud > 0.5 and context_anom > 0.4:
+            scores["SUSPICIOUS_SOCIAL_ENGINEERING"] += 30
+
+        # Smurfing: low amounts, high frequency, blacklisted
+        if amount < 5000 and frequency >= 10 and (blacklist > 0.3 or past_fraud > 0.3):
+            scores["SUSPICIOUS_SMURFING"] += 50
+        if norm_amount < 0.3 and frequency >= 8:
+            scores["SUSPICIOUS_SMURFING"] += 20
+
+        # Determine primary classification
+        best_category = max(scores, key=lambda k: scores[k])
+        best_score = scores[best_category]
+
+        if best_score < 15:
+            best_category = "UNKNOWN"
+            confidence = "LOW"
+        elif best_score < 35:
+            confidence = "MEDIUM"
+        else:
+            confidence = "HIGH"
+
+        is_suspicious = best_category.startswith("SUSPICIOUS_")
+
+        # RF model cross-check
+        rf_verdict = None
+        if len(feat) == len(RF_FEATURE_NAMES):
+            fv_arr = np.array([feat.get(n, 0.0) for n in RF_FEATURE_NAMES], dtype=float).reshape(1, -1)
+            rf_pred_val = int(rf_model.predict(fv_arr)[0])
+            rf_prob = round(float(rf_model.predict_proba(fv_arr)[0][1]) * 100, 1) if hasattr(rf_model, 'predict_proba') else None
+            rf_verdict = {"verdict": "FRAUD" if rf_pred_val == 1 else "LEGITIMATE", "fraud_probability": rf_prob}
+
+        # Category descriptions
+        category_descriptions = {
+            "P2P_PERSONAL": "Personal peer-to-peer transfer between known individuals",
+            "MERCHANT_PAYMENT": "Payment to a registered merchant or business",
+            "BILL_UTILITY": "Recurring utility, subscription, or bill payment",
+            "INVESTMENT": "High-value investment, savings, or large transfer to trusted recipient",
+            "SUSPICIOUS_ADVANCE_FEE": "Possible advance-fee/lottery scam — payment demanded before promised reward",
+            "SUSPICIOUS_SOCIAL_ENGINEERING": "Possible social engineering attack — unusual device, VPN, and high-risk timing",
+            "SUSPICIOUS_SMURFING": "Possible smurfing / structuring — small amounts at high frequency to evade detection",
+            "UNKNOWN": "Insufficient signals to classify transaction purpose",
+        }
+
+        all_scores = sorted(
+            [{"category": k, "score": v} for k, v in scores.items()],
+            key=lambda x: x["score"], reverse=True
+        )
+
+        return jsonify({
+            "predicted_purpose": best_category,
+            "confidence": confidence,
+            "description": category_descriptions.get(best_category, ""),
+            "is_suspicious": is_suspicious,
+            "all_category_scores": all_scores,
+            "rf_cross_check": rf_verdict,
+            "recommended_action": "BLOCK" if (is_suspicious and confidence == "HIGH") else
+                                  ("REVIEW" if is_suspicious else "APPROVE"),
+            "ai_summary": (
+                f"Transaction classified as '{best_category}' with {confidence} confidence. "
+                + (f"ALERT: Suspicious category detected — {category_descriptions.get(best_category, '')}. "
+                   if is_suspicious else "")
+                + (f"RF model cross-check: {rf_verdict['verdict']} ({rf_verdict['fraud_probability']}% fraud prob)."
+                   if rf_verdict else "")
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ADVANCED FRAUD INTELLIGENCE FEATURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── Geo-Velocity / Impossible Travel Detection ───────────────────────────────
+
+@app.route('/geo-velocity', methods=['POST'])
+def geo_velocity():
+    """
+    Detect impossible-travel fraud: two transactions from locations that are
+    physically impossible to travel between in the elapsed time.
+
+    Supports two input modes:
+    - Coordinate mode: provide lat/lon for precise Haversine distance.
+    - City-code mode: provide city name, uses approximate inter-city distances.
+
+    Request:
+    {
+      "user_id": "user@upi",
+      "lat": 19.076,  "lon": 72.877,          // current location (Mumbai)
+      "city": "Mumbai",                         // optional city name
+      "timestamp": "2024-12-01T14:32:00Z",     // optional, defaults to now
+      "record": true                            // log this location
+    }
+    Response includes impossible_travel flag, distance_km, max_possible_km,
+    and risk level.
+    """
+    try:
+        import math
+        data = request.get_json() or {}
+        user_id = data.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Provide 'user_id'"}), 400
+
+        lat = data.get("lat")
+        lon = data.get("lon")
+        city = data.get("city", "")
+        record = bool(data.get("record", True))
+
+        # Parse timestamp
+        ts_str = data.get("timestamp")
+        try:
+            now = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str else datetime.utcnow()
+        except Exception:
+            now = datetime.utcnow()
+        now_ts = now.timestamp()
+
+        # Fallback city coordinates (major Indian cities)
+        CITY_COORDS = {
+            "mumbai": (19.076, 72.877), "delhi": (28.613, 77.209),
+            "bangalore": (12.972, 77.594), "bengaluru": (12.972, 77.594),
+            "hyderabad": (17.385, 78.487), "chennai": (13.083, 80.270),
+            "kolkata": (22.573, 88.364), "pune": (18.520, 73.856),
+            "ahmedabad": (23.023, 72.571), "jaipur": (26.912, 75.787),
+            "lucknow": (26.847, 80.947), "surat": (21.170, 72.831),
+            "kanpur": (26.449, 80.331), "nagpur": (21.146, 79.089),
+            "patna": (25.594, 85.137), "bhopal": (23.259, 77.413),
+        }
+
+        if lat is None or lon is None:
+            city_key = city.lower().strip()
+            if city_key in CITY_COORDS:
+                lat, lon = CITY_COORDS[city_key]
+            else:
+                return jsonify({"error": "Provide 'lat'/'lon' coordinates or a known 'city' name"}), 400
+
+        lat, lon = float(lat), float(lon)
+        location_store = state["location_store"]
+        prev = location_store.get(user_id)
+
+        result = {
+            "user_id": user_id,
+            "current_location": {"lat": lat, "lon": lon, "city": city or None},
+            "impossible_travel": False,
+            "distance_km": None,
+            "elapsed_minutes": None,
+            "max_possible_km": None,
+            "speed_kmh": None,
+            "previous_location": None,
+            "geo_risk_level": "LOW",
+            "recommended_action": "APPROVE",
+        }
+
+        if prev:
+            # Haversine distance
+            R = 6371.0
+            lat1, lon1 = math.radians(prev["lat"]), math.radians(prev["lon"])
+            lat2, lon2 = math.radians(lat), math.radians(lon)
+            dlat, dlon = lat2 - lat1, lon2 - lon1
+            a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+            distance_km = round(2 * R * math.asin(math.sqrt(a)), 1)
+
+            elapsed_sec = max(1, now_ts - prev["ts"])
+            elapsed_min = round(elapsed_sec / 60, 1)
+            # Max physically possible: commercial flight ~900 km/h + airport time floor 30 min
+            max_possible_km = round(max(0, (elapsed_sec / 3600) * 900 - 50), 1)
+            speed_kmh = round(distance_km / (elapsed_sec / 3600), 1)
+
+            impossible = distance_km > max_possible_km and distance_km > 100
+            if distance_km > 1000 and elapsed_min < 60:
+                geo_risk = "CRITICAL"
+                action = "BLOCK"
+            elif impossible:
+                geo_risk = "HIGH"
+                action = "BLOCK"
+            elif distance_km > 500 and elapsed_min < 120:
+                geo_risk = "MEDIUM"
+                action = "REVIEW"
+            elif distance_km > 200:
+                geo_risk = "LOW"
+                action = "APPROVE"
+            else:
+                geo_risk = "LOW"
+                action = "APPROVE"
+
+            result.update({
+                "impossible_travel": impossible,
+                "distance_km": distance_km,
+                "elapsed_minutes": elapsed_min,
+                "max_possible_km": max_possible_km,
+                "speed_kmh": speed_kmh,
+                "previous_location": {"lat": prev["lat"], "lon": prev["lon"], "city": prev.get("city"), "ts": prev["ts"]},
+                "geo_risk_level": geo_risk,
+                "recommended_action": action,
+                "ai_summary": (
+                    f"Distance from last transaction: {distance_km} km in {elapsed_min} min "
+                    f"(equivalent speed: {speed_kmh} km/h). "
+                    + (f"IMPOSSIBLE TRAVEL DETECTED — max reachable in this time: {max_possible_km} km. "
+                       if impossible else f"Travel is physically plausible (max: {max_possible_km} km). ")
+                    + f"Geo risk: {geo_risk}."
+                ),
+            })
+        else:
+            result["ai_summary"] = f"First recorded location for {user_id}. No travel comparison possible yet."
+
+        if record:
+            location_store[user_id] = {"lat": lat, "lon": lon, "city": city, "ts": now_ts}
+
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Unified Risk Score Blend ─────────────────────────────────────────────────
+
+@app.route('/risk-score-blend', methods=['POST'])
+def risk_score_blend():
+    """
+    Master risk endpoint — blends scores from every available signal source
+    into one final weighted composite risk score (0–100). This mirrors how
+    production payment engines like PhonePe combine ML + rules + behaviour.
+
+    Pass whichever sub-scores you have; missing ones default to 0.
+    Each signal carries a configurable weight (defaults provided).
+
+    Request:
+    {
+      "rf_fraud_probability":   75,   // 0-100 from /predict or /check-single
+      "velocity_risk":          "HIGH",   // LOW/MEDIUM/HIGH from /velocity-check
+      "amount_risk_score":      40,   // 0-100 from /amount-pattern
+      "ato_risk_score":         60,   // 0-100 from /account-takeover
+      "recipient_trust_score":  30,   // 0-100 from /recipient-trust
+      "spending_deviation":     25,   // 0-100 from /spending-pattern
+      "geo_risk":               "LOW",    // LOW/MEDIUM/HIGH/CRITICAL from /geo-velocity
+      "device_risk_score":      20,   // 0-100 from /device-risk
+      "weights": {  // optional overrides
+        "rf_model": 0.35, "velocity": 0.15, "amount": 0.10,
+        "ato": 0.15, "recipient": 0.10, "spending": 0.05,
+        "geo": 0.05, "device": 0.05
+      }
+    }
+    """
+    try:
+        data = request.get_json() or {}
+
+        # Default weights (must sum to 1.0)
+        default_weights = {
+            "rf_model":  0.35,
+            "velocity":  0.15,
+            "amount":    0.10,
+            "ato":       0.15,
+            "recipient": 0.10,
+            "spending":  0.05,
+            "geo":       0.05,
+            "device":    0.05,
+        }
+        user_weights = data.get("weights", {})
+        weights = {k: float(user_weights.get(k, default_weights[k])) for k in default_weights}
+
+        # Normalise weights to sum to 1
+        total_w = sum(weights.values())
+        weights = {k: v / total_w for k, v in weights.items()}
+
+        def level_to_score(level, high=80, medium=45, low=10, critical=95):
+            lvl = str(level).upper()
+            return {"CRITICAL": critical, "HIGH": high, "MEDIUM": medium, "LOW": low}.get(lvl, 0)
+
+        # Resolve each signal score (0-100)
+        rf_score      = float(data.get("rf_fraud_probability", 0))
+        velocity_score = level_to_score(data.get("velocity_risk", "LOW"))
+        amount_score  = float(data.get("amount_risk_score", 0))
+        ato_score     = float(data.get("ato_risk_score", 0))
+        # Recipient trust is inverted: low trust = high risk
+        recipient_raw = float(data.get("recipient_trust_score", 100))
+        recipient_score = max(0, 100 - recipient_raw)
+        spending_score = float(data.get("spending_deviation", 0))
+        geo_score     = level_to_score(data.get("geo_risk", "LOW"))
+        device_score  = float(data.get("device_risk_score", 0))
+
+        signal_scores = {
+            "rf_model":  min(100, max(0, rf_score)),
+            "velocity":  min(100, max(0, velocity_score)),
+            "amount":    min(100, max(0, amount_score)),
+            "ato":       min(100, max(0, ato_score)),
+            "recipient": min(100, max(0, recipient_score)),
+            "spending":  min(100, max(0, spending_score)),
+            "geo":       min(100, max(0, geo_score)),
+            "device":    min(100, max(0, device_score)),
+        }
+
+        # Weighted composite
+        composite = sum(signal_scores[k] * weights[k] for k in signal_scores)
+        composite = round(min(100, max(0, composite)), 1)
+
+        # Hard overrides (any single critical signal forces minimum composite)
+        if signal_scores["rf_model"] >= 85:
+            composite = max(composite, 75)
+        if signal_scores["ato"] >= 70:
+            composite = max(composite, 65)
+        if geo_score >= 95:  # CRITICAL geo
+            composite = max(composite, 80)
+
+        risk = "CRITICAL" if composite >= 80 else ("HIGH" if composite >= 60 else ("MEDIUM" if composite >= 35 else "LOW"))
+        action = "BLOCK" if composite >= 60 else ("REVIEW" if composite >= 35 else "APPROVE")
+
+        # Signal breakdown for transparency
+        breakdown = [
+            {
+                "signal": k,
+                "raw_score": round(signal_scores[k], 1),
+                "weight": round(weights[k], 3),
+                "weighted_contribution": round(signal_scores[k] * weights[k], 2),
+                "level": "HIGH" if signal_scores[k] >= 60 else ("MEDIUM" if signal_scores[k] >= 30 else "LOW"),
+            }
+            for k in signal_scores
+        ]
+        breakdown.sort(key=lambda x: x["weighted_contribution"], reverse=True)
+
+        top_signals = [b["signal"] for b in breakdown if b["weighted_contribution"] >= 5]
+
+        return jsonify({
+            "composite_risk_score": composite,
+            "risk_level": risk,
+            "recommended_action": action,
+            "signal_breakdown": breakdown,
+            "weights_used": weights,
+            "top_contributing_signals": top_signals,
+            "hard_overrides_applied": composite != round(sum(signal_scores[k] * weights[k] for k in signal_scores), 1),
+            "ai_summary": (
+                f"Composite risk score: {composite}/100 ({risk}). "
+                f"Action: {action}. "
+                + (f"Top signals: {', '.join(top_signals)}." if top_signals else "All signals within normal range.")
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Fraud Calendar (Time-based Heatmap) ─────────────────────────────────────
+
+@app.route('/fraud-calendar', methods=['GET'])
+def fraud_calendar():
+    """
+    Build a fraud frequency heatmap by hour-of-day and day-of-week from
+    the loaded dataset. Uses:
+    - 'High-Risk Transaction Times' feature to infer risky hours
+    - Actual date column if present
+    - Score history timestamps for real scored transactions
+
+    Returns heatmap data suitable for a calendar/heatmap chart component.
+    """
+    try:
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+        label_col = state["label_col"]
+        score_history = state["score_history"]
+
+        hour_fraud = [0] * 24
+        hour_total = [0] * 24
+        day_fraud  = [0] * 7   # 0=Mon … 6=Sun
+        day_total  = [0] * 7
+
+        # ── From score history (real scored transactions with timestamps) ──────
+        history_hours = {}
+        for entry in score_history:
+            try:
+                ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
+                h = ts.hour
+                history_hours[h] = history_hours.get(h, {"fraud": 0, "total": 0})
+                history_hours[h]["total"] += 1
+                if entry["verdict"] == "FRAUD":
+                    history_hours[h]["fraud"] += 1
+                d = ts.weekday()
+                day_total[d] += 1
+                if entry["verdict"] == "FRAUD":
+                    day_fraud[d] += 1
+            except Exception:
+                pass
+
+        # ── From dataset: use date column if available ────────────────────────
+        dataset_hour_data = []
+        if df is not None:
+            date_col = find_date_col(df)
+            if date_col:
+                try:
+                    dt_series = pd.to_datetime(df[date_col], errors='coerce')
+                    for i, row in df.iterrows():
+                        h = dt_series.iloc[i].hour if not pd.isnull(dt_series.iloc[i]) else None
+                        d = dt_series.iloc[i].weekday() if not pd.isnull(dt_series.iloc[i]) else None
+                        is_fraud = int(row[label_col]) if label_col and label_col in df.columns else 0
+                        if h is not None:
+                            hour_total[h] += 1
+                            hour_fraud[h] += is_fraud
+                        if d is not None:
+                            day_total[d] += 1
+                            day_fraud[d] += is_fraud
+                except Exception:
+                    pass
+
+            # ── Fallback: use 'High-Risk Transaction Times' feature ───────────
+            hrt_col = next((c for c in feature_cols if "high-risk" in c.lower() or "high_risk" in c.lower()), None)
+            if hrt_col and sum(hour_total) == 0:
+                high_risk_mask = df[hrt_col].values > 0.5
+                # Map high-risk flag to typical night hours (23, 0, 1, 2, 3, 4)
+                night_hours = [23, 0, 1, 2, 3, 4]
+                day_hours = list(range(8, 20))
+                for i in range(len(df)):
+                    is_fraud = int(df.iloc[i][label_col]) if label_col else 0
+                    if high_risk_mask[i]:
+                        h = night_hours[i % len(night_hours)]
+                    else:
+                        h = day_hours[i % len(day_hours)]
+                    hour_total[h] += 1
+                    hour_fraud[h] += is_fraud
+
+        # Merge score history into hour arrays
+        for h, counts in history_hours.items():
+            hour_total[h] += counts["total"]
+            hour_fraud[h] += counts["fraud"]
+
+        # Build output arrays
+        hour_heatmap = []
+        peak_fraud_hour = 0
+        peak_rate = 0
+        for h in range(24):
+            total = hour_total[h]
+            fraud = hour_fraud[h]
+            rate = round(fraud / max(total, 1) * 100, 1)
+            if rate > peak_rate and total > 0:
+                peak_rate = rate
+                peak_fraud_hour = h
+            hour_heatmap.append({
+                "hour": h,
+                "label": f"{h:02d}:00",
+                "total_transactions": total,
+                "fraud_count": fraud,
+                "fraud_rate_pct": rate,
+                "risk_band": "HIGH" if rate >= 20 else ("MEDIUM" if rate >= 8 else "LOW"),
+            })
+
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_heatmap = []
+        for d in range(7):
+            total = day_total[d]
+            fraud = day_fraud[d]
+            rate = round(fraud / max(total, 1) * 100, 1)
+            day_heatmap.append({
+                "day_index": d,
+                "day_name": day_names[d],
+                "total_transactions": total,
+                "fraud_count": fraud,
+                "fraud_rate_pct": rate,
+                "risk_band": "HIGH" if rate >= 20 else ("MEDIUM" if rate >= 8 else "LOW"),
+            })
+
+        high_risk_hours = [h["label"] for h in hour_heatmap if h["risk_band"] == "HIGH"]
+        data_sources = []
+        if sum(hour_total) > 0:
+            data_sources.append("dataset")
+        if score_history:
+            data_sources.append("score_history")
+        if not data_sources:
+            data_sources.append("no_data")
+
+        return jsonify({
+            "hour_heatmap": hour_heatmap,
+            "day_heatmap": day_heatmap,
+            "peak_fraud_hour": peak_fraud_hour,
+            "peak_fraud_hour_label": f"{peak_fraud_hour:02d}:00",
+            "peak_fraud_rate_pct": peak_rate,
+            "high_risk_hours": high_risk_hours,
+            "data_sources": data_sources,
+            "ai_summary": (
+                f"Fraud calendar built from {sum(hour_total):,} transaction records. "
+                + (f"Peak fraud hour: {peak_fraud_hour:02d}:00 ({peak_rate:.1f}% fraud rate). " if peak_rate > 0 else "")
+                + (f"High-risk hours: {', '.join(high_risk_hours)}." if high_risk_hours else "No clear high-risk hour pattern detected.")
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Device Risk Scoring ──────────────────────────────────────────────────────
+
+@app.route('/device-risk', methods=['POST'])
+def device_risk():
+    """
+    Device fingerprint trust scoring — a foundational PhonePe/GPay safety layer.
+    Analyses device signals to produce a device trust score (0 = untrusted,
+    100 = fully trusted).
+
+    Request:
+    {
+      "device_id": "dev_abc123",
+      "is_rooted": false,
+      "is_emulator": false,
+      "is_new_device": true,
+      "days_since_app_install": 1,
+      "app_version": "5.1.2",
+      "expected_app_version": "5.1.2",
+      "os_version": "Android 13",
+      "failed_biometric_attempts": 0,
+      "is_screen_sharing_active": false,
+      "accessibility_services_active": false,  // spyware / RAT indicator
+      "unknown_sources_enabled": false,          // sideloaded APKs
+      "battery_optimization_disabled": false,
+      "is_vpn_active": false,
+      "sim_changed_recently": false,
+      "multiple_accounts_on_device": false
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        device_id = data.get("device_id", "unknown")
+
+        trust_score = 100
+        risk_flags = []
+        positive_signals = []
+
+        def deduct(points, flag, severity, detail):
+            risk_flags.append({"flag": flag, "severity": severity, "detail": detail, "points_deducted": points})
+            return points
+
+        # Critical signals — immediate high risk
+        if bool(data.get("is_rooted", False)):
+            trust_score -= deduct(40, "rooted_device", "CRITICAL",
+                "Device is rooted/jailbroken — security controls bypassed, malware risk very high")
+
+        if bool(data.get("is_emulator", False)):
+            trust_score -= deduct(45, "emulator", "CRITICAL",
+                "Transaction from an emulator — typical of automated fraud bots and testing attacks")
+
+        if bool(data.get("is_screen_sharing_active", False)):
+            trust_score -= deduct(35, "screen_sharing", "CRITICAL",
+                "Screen sharing active — user may be under remote control by scammer")
+
+        if bool(data.get("accessibility_services_active", False)):
+            trust_score -= deduct(30, "accessibility_abuse", "HIGH",
+                "Accessibility services active — common indicator of RAT malware or overlay attacks")
+
+        # High risk signals
+        if bool(data.get("unknown_sources_enabled", False)):
+            trust_score -= deduct(20, "unknown_sources", "HIGH",
+                "Installation from unknown sources enabled — sideloaded or untrusted app")
+
+        if bool(data.get("sim_changed_recently", False)):
+            trust_score -= deduct(20, "sim_swap", "HIGH",
+                "SIM card changed recently — possible SIM swap fraud")
+
+        if bool(data.get("is_vpn_active", False)):
+            trust_score -= deduct(15, "vpn_active", "MEDIUM",
+                "VPN/proxy active — location masking detected")
+
+        # Medium risk signals
+        is_new_device = bool(data.get("is_new_device", False))
+        if is_new_device:
+            trust_score -= deduct(15, "new_device", "MEDIUM",
+                "Transaction from a device not previously seen for this account")
+
+        install_days = int(data.get("days_since_app_install", 365))
+        if install_days < 1:
+            trust_score -= deduct(20, "fresh_install", "HIGH",
+                "App installed less than 24 hours ago — common in account takeover scenarios")
+        elif install_days < 7:
+            trust_score -= deduct(10, "recent_install", "MEDIUM",
+                f"App installed only {install_days} day(s) ago")
+        else:
+            positive_signals.append(f"App installed {install_days} days ago — established device")
+
+        app_ver = str(data.get("app_version", ""))
+        expected_ver = str(data.get("expected_app_version", ""))
+        if app_ver and expected_ver and app_ver != expected_ver:
+            trust_score -= deduct(10, "outdated_app", "LOW",
+                f"App version {app_ver} differs from expected {expected_ver} — update pending or tampered")
+
+        failed_bio = int(data.get("failed_biometric_attempts", 0))
+        if failed_bio >= 3:
+            trust_score -= deduct(15, "biometric_failures", "MEDIUM",
+                f"{failed_bio} failed biometric attempts before this transaction")
+
+        if bool(data.get("multiple_accounts_on_device", False)):
+            trust_score -= deduct(10, "multiple_accounts", "LOW",
+                "Multiple payment accounts active on same device — shared device risk")
+
+        # Positive signals
+        if not bool(data.get("is_rooted", False)) and not bool(data.get("is_emulator", False)):
+            positive_signals.append("Device integrity checks passed")
+        if not bool(data.get("is_vpn_active", False)):
+            positive_signals.append("No VPN/proxy detected")
+        if install_days >= 30 and not is_new_device:
+            positive_signals.append("Long-standing device with established history")
+
+        trust_score = max(0, min(100, trust_score))
+        risk = "CRITICAL" if trust_score < 20 else ("HIGH" if trust_score < 40 else ("MEDIUM" if trust_score < 65 else "LOW"))
+        action = "BLOCK" if trust_score < 30 else ("REVIEW" if trust_score < 65 else "APPROVE")
+
+        return jsonify({
+            "device_id": device_id,
+            "device_trust_score": trust_score,
+            "trust_grade": "A" if trust_score >= 85 else ("B" if trust_score >= 65 else ("C" if trust_score >= 40 else ("D" if trust_score >= 20 else "F"))),
+            "risk_level": risk,
+            "recommended_action": action,
+            "risk_flags": sorted(risk_flags, key=lambda x: {"CRITICAL":0,"HIGH":1,"MEDIUM":2,"LOW":3}[x["severity"]]),
+            "positive_signals": positive_signals,
+            "total_points_deducted": 100 - trust_score,
+            "ai_summary": (
+                f"Device '{device_id}' trust score: {trust_score}/100 ({risk} risk). "
+                + (f"{len(risk_flags)} security flag(s): {', '.join(f['flag'] for f in risk_flags[:3])}."
+                   if risk_flags else "Device passes all security checks.")
+            ),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Dataset Drift Detection ──────────────────────────────────────────────────
+
+@app.route('/dataset-drift', methods=['GET'])
+def dataset_drift():
+    """
+    Detect feature distribution drift between the loaded dataset and the
+    RF model's training reference (RF_FEATURE_STATS). A drifted dataset
+    means the model's predictions may be unreliable.
+
+    Uses Population Stability Index (PSI) approximation and z-score
+    comparison of feature means to identify drifted features.
+    PSI < 0.1 = stable, 0.1–0.25 = minor drift, > 0.25 = significant drift.
+    """
+    try:
+        df = state["df"]
+        feature_cols = state["feature_cols"]
+
+        if df is None:
+            return jsonify({"error": "No dataset loaded. Upload a CSV first."}), 400
+
+        # Only check features that exist in both dataset and RF reference
+        common_features = [c for c in feature_cols if c in RF_FEATURE_STATS]
+
+        if not common_features:
+            return jsonify({
+                "message": "No features in common between loaded dataset and RF training reference.",
+                "dataset_features": feature_cols[:10],
+                "rf_features": RF_FEATURE_NAMES[:10],
+            })
+
+        drift_results = []
+        drifted_features = []
+        stable_features = []
+
+        for feat in common_features:
+            ref = RF_FEATURE_STATS[feat]
+            ref_mean = ref["mean"]
+            ref_std = max(ref["std"], 1e-6)
+
+            dataset_mean = float(df[feat].mean())
+            dataset_std = float(df[feat].std()) or 1e-6
+
+            # Mean shift z-score
+            mean_z = abs(dataset_mean - ref_mean) / ref_std
+
+            # Variance ratio
+            var_ratio = dataset_std / ref_std
+
+            # PSI approximation using decile buckets
+            ref_dist = np.random.normal(ref_mean, ref_std, 1000)
+            dataset_vals = df[feat].values
+            bins = np.percentile(ref_dist, np.linspace(0, 100, 11))
+            bins[0] -= 1e-6
+            bins[-1] += 1e-6
+
+            ref_counts = np.histogram(ref_dist, bins=bins)[0]
+            data_counts = np.histogram(dataset_vals, bins=bins)[0]
+
+            ref_pct = ref_counts / max(ref_counts.sum(), 1)
+            data_pct = data_counts / max(data_counts.sum(), 1)
+
+            # PSI = sum((actual% - expected%) * ln(actual%/expected%))
+            psi = 0.0
+            for rp, dp in zip(ref_pct, data_pct):
+                rp = max(rp, 1e-6)
+                dp = max(dp, 1e-6)
+                psi += (dp - rp) * np.log(dp / rp)
+            psi = round(float(psi), 4)
+
+            drift_level = "STABLE" if psi < 0.1 else ("MINOR_DRIFT" if psi < 0.25 else "SIGNIFICANT_DRIFT")
+            is_drifted = psi >= 0.1
+
+            entry = {
+                "feature": feat,
+                "training_mean": round(ref_mean, 4),
+                "dataset_mean": round(dataset_mean, 4),
+                "mean_shift_z": round(mean_z, 3),
+                "training_std": round(ref_std, 4),
+                "dataset_std": round(dataset_std, 4),
+                "variance_ratio": round(var_ratio, 3),
+                "psi": psi,
+                "drift_level": drift_level,
+                "is_drifted": is_drifted,
+            }
+            drift_results.append(entry)
+            (drifted_features if is_drifted else stable_features).append(feat)
+
+        drift_results.sort(key=lambda x: x["psi"], reverse=True)
+
+        overall_psi = round(float(np.mean([r["psi"] for r in drift_results])), 4) if drift_results else 0
+        overall_drift = "SIGNIFICANT" if overall_psi >= 0.25 else ("MINOR" if overall_psi >= 0.1 else "STABLE")
+
+        recommendations = []
+        if overall_drift == "SIGNIFICANT":
+            recommendations.append("Significant feature drift detected — model predictions may be unreliable. Recommend retraining.")
+            recommendations.append("Prioritise retraining on features: " + ", ".join(drifted_features[:3]))
+        elif overall_drift == "MINOR":
+            recommendations.append("Minor drift present. Monitor model performance and schedule retraining within 2 weeks.")
+        else:
+            recommendations.append("Dataset is well-aligned with training distribution. No immediate retraining required.")
+
+        return jsonify({
+            "features_checked": len(common_features),
+            "drifted_features": drifted_features,
+            "stable_features": stable_features,
+            "overall_psi": overall_psi,
+            "overall_drift_status": overall_drift,
+            "feature_drift_details": drift_results,
+            "recommendations": recommendations,
+            "ai_summary": (
+                f"Drift analysis: {len(drifted_features)}/{len(common_features)} features show distribution shift "
+                f"from RF training baseline. Overall PSI: {overall_psi} ({overall_drift}). "
+                + recommendations[0]
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ─── Retraining Readiness Assessment ──────────────────────────────────────────
+
+@app.route('/retraining-readiness', methods=['POST'])
+def retraining_readiness():
+    """
+    Assess whether the ML models are due for retraining based on multiple
+    health signals. Returns a readiness score (0-100) and a retraining
+    urgency level.
+
+    Signals evaluated:
+    - Analyst feedback accuracy (from /feedback-stats)
+    - Score history fraud rate trend (rising = model degrading)
+    - Dataset drift PSI (from /dataset-drift)
+    - Dataset size (too small = unreliable)
+    - Time since last detection run
+    - False positive / false negative rates from feedback
+
+    Request (all optional, read from state if not provided):
+    {
+      "override_feedback_accuracy": 85,   // % correct from feedback log
+      "override_dataset_psi": 0.15,       // mean PSI from drift check
+      "override_false_positive_rate": 12, // %
+      "override_false_negative_rate": 8   // %
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        df = state["df"]
+        feedback_log = state["feedback_log"]
+        score_history = state["score_history"]
+        detection_ts = state.get("detection_timestamp")
+
+        issues = []
+        score = 0  # higher = more urgency to retrain
+
+        # ── Signal 1: Feedback accuracy ───────────────────────────────────────
+        if "override_feedback_accuracy" in data:
+            fb_accuracy = float(data["override_feedback_accuracy"])
+        elif feedback_log:
+            correct = sum(1 for e in feedback_log if e["is_correct"])
+            fb_accuracy = round(correct / len(feedback_log) * 100, 1)
+        else:
+            fb_accuracy = None
+
+        if fb_accuracy is not None:
+            if fb_accuracy < 70:
+                score += 35
+                issues.append({"signal": "low_feedback_accuracy", "severity": "CRITICAL",
+                                "detail": f"Model accuracy from analyst feedback: {fb_accuracy:.1f}% — well below acceptable threshold"})
+            elif fb_accuracy < 85:
+                score += 20
+                issues.append({"signal": "degraded_accuracy", "severity": "HIGH",
+                                "detail": f"Model accuracy from feedback: {fb_accuracy:.1f}% — below 85% target"})
+            elif fb_accuracy < 92:
+                score += 10
+                issues.append({"signal": "marginal_accuracy", "severity": "MEDIUM",
+                                "detail": f"Model accuracy: {fb_accuracy:.1f}% — slightly below ideal (>92%)"})
+
+        # ── Signal 2: False positive / negative rates ─────────────────────────
+        if "override_false_positive_rate" in data:
+            fp_rate = float(data["override_false_positive_rate"])
+        elif feedback_log:
+            fp = sum(1 for e in feedback_log if e.get("correction_type") == "false_positive")
+            fp_rate = round(fp / max(len(feedback_log), 1) * 100, 1)
+        else:
+            fp_rate = None
+
+        if "override_false_negative_rate" in data:
+            fn_rate = float(data["override_false_negative_rate"])
+        elif feedback_log:
+            fn = sum(1 for e in feedback_log if e.get("correction_type") == "false_negative")
+            fn_rate = round(fn / max(len(feedback_log), 1) * 100, 1)
+        else:
+            fn_rate = None
+
+        if fp_rate is not None and fp_rate > 20:
+            score += 15
+            issues.append({"signal": "high_false_positive_rate", "severity": "HIGH",
+                            "detail": f"False positive rate: {fp_rate:.1f}% — model over-flagging legitimate transactions"})
+        if fn_rate is not None and fn_rate > 10:
+            score += 20
+            issues.append({"signal": "high_false_negative_rate", "severity": "CRITICAL",
+                            "detail": f"False negative rate: {fn_rate:.1f}% — model missing real fraud"})
+
+        # ── Signal 3: Score history fraud rate trend ──────────────────────────
+        history_trend = None
+        if len(score_history) >= 20:
+            half = len(score_history) // 2
+            early_fraud_rate = sum(1 for h in score_history[:half] if h["verdict"] == "FRAUD") / half
+            recent_fraud_rate = sum(1 for h in score_history[half:] if h["verdict"] == "FRAUD") / max(len(score_history) - half, 1)
+            history_trend = round((recent_fraud_rate - early_fraud_rate) * 100, 1)
+
+            if history_trend > 15:
+                score += 20
+                issues.append({"signal": "rising_fraud_rate", "severity": "HIGH",
+                                "detail": f"Fraud detection rate increased by {history_trend:.1f}pp in recent scoring — possible concept drift"})
+            elif history_trend > 8:
+                score += 10
+                issues.append({"signal": "increasing_fraud_trend", "severity": "MEDIUM",
+                                "detail": f"Fraud rate trending upward ({history_trend:+.1f}pp) in recent transactions"})
+
+        # ── Signal 4: Dataset drift ────────────────────────────────────────────
+        if "override_dataset_psi" in data:
+            mean_psi = float(data["override_dataset_psi"])
+        elif df is not None:
+            # Quick PSI estimate for key features
+            psi_vals = []
+            for feat in RF_FEATURE_NAMES[:8]:
+                if feat in (state["feature_cols"] or []):
+                    ref = RF_FEATURE_STATS.get(feat, {})
+                    ref_mean = ref.get("mean", 0)
+                    ref_std = max(ref.get("std", 1), 1e-6)
+                    ds_mean = float(df[feat].mean())
+                    z = abs(ds_mean - ref_mean) / ref_std
+                    psi_vals.append(min(1.0, z * 0.1))
+            mean_psi = round(float(np.mean(psi_vals)), 4) if psi_vals else 0
+        else:
+            mean_psi = 0
+
+        if mean_psi >= 0.25:
+            score += 25
+            issues.append({"signal": "significant_data_drift", "severity": "HIGH",
+                            "detail": f"Mean PSI {mean_psi:.3f} — significant distribution shift from training data"})
+        elif mean_psi >= 0.1:
+            score += 12
+            issues.append({"signal": "minor_data_drift", "severity": "MEDIUM",
+                            "detail": f"Mean PSI {mean_psi:.3f} — minor distribution drift detected"})
+
+        # ── Signal 5: Dataset size ────────────────────────────────────────────
+        if df is not None:
+            n = len(df)
+            if n < 500:
+                score += 15
+                issues.append({"signal": "small_dataset", "severity": "MEDIUM",
+                                "detail": f"Only {n} rows loaded — too small for reliable model evaluation"})
+
+        # ── Signal 6: Time since last detection ───────────────────────────────
+        days_since = None
+        if detection_ts:
+            try:
+                last_dt = datetime.fromisoformat(detection_ts.replace("Z", "+00:00"))
+                days_since = (datetime.utcnow() - last_dt.replace(tzinfo=None)).days
+                if days_since > 30:
+                    score += 10
+                    issues.append({"signal": "stale_detection", "severity": "LOW",
+                                    "detail": f"Last detection run was {days_since} days ago — models may be outdated"})
+            except Exception:
+                pass
+
+        score = min(100, score)
+        urgency = "IMMEDIATE" if score >= 60 else ("RECOMMENDED" if score >= 30 else ("OPTIONAL" if score >= 15 else "NOT_NEEDED"))
+
+        retraining_steps = {
+            "IMMEDIATE": [
+                "1. Collect and label recent transactions (minimum 500 labelled samples)",
+                "2. Run /upload with new dataset and check /dataset-drift",
+                "3. Run /detect with autoencoder + isolation_forest",
+                "4. Compare metrics via /model-comparison before deploying",
+                "5. Reset feedback log after retraining",
+            ],
+            "RECOMMENDED": [
+                "1. Accumulate more analyst-labelled data (target 1,000+ samples)",
+                "2. Schedule retraining within 2 weeks",
+                "3. Monitor /feedback-stats weekly until retrained",
+            ],
+            "OPTIONAL": ["Monitor /feedback-stats and /score-history for 1–2 more weeks before deciding."],
+            "NOT_NEEDED": ["Models are performing well. Continue routine monitoring."],
+        }
+
+        return jsonify({
+            "retraining_urgency": urgency,
+            "readiness_score": score,
+            "issues_detected": issues,
+            "issue_count": len(issues),
+            "signals_evaluated": {
+                "feedback_accuracy_pct": fb_accuracy,
+                "false_positive_rate_pct": fp_rate,
+                "false_negative_rate_pct": fn_rate,
+                "score_history_trend_pp": history_trend,
+                "mean_dataset_psi": mean_psi,
+                "days_since_last_detection": days_since,
+                "dataset_rows": len(df) if df is not None else None,
+                "feedback_entries": len(feedback_log),
+            },
+            "recommended_steps": retraining_steps[urgency],
+            "ai_summary": (
+                f"Retraining readiness score: {score}/100 — urgency: {urgency}. "
+                + (f"{len(issues)} issue(s) flagged: {', '.join(i['signal'] for i in issues)}."
+                   if issues else "All health signals are within acceptable ranges.")
+            ),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEK 1 — Notifications & Transaction Limits
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/notifications', methods=['GET'])
+def get_notifications():
+    """Return simulated notifications list for the authenticated user."""
+    user_id = request.args.get('userId', '')
+    notifs = [
+        {"id": "n1", "type": "fraud_alert", "title": "High-Risk Transaction Detected",
+         "message": "A transaction of ₹8,500 to unknown@upi was flagged as HIGH_RISK by our AI.",
+         "read": False, "createdAt": int(time.time()) - 300, "severity": "HIGH"},
+        {"id": "n2", "type": "budget_warning", "title": "Budget Limit Warning",
+         "message": "You have used 85% of your Entertainment budget this month.",
+         "read": False, "createdAt": int(time.time()) - 3600, "severity": "MEDIUM"},
+        {"id": "n3", "type": "payment", "title": "Payment Successful",
+         "message": "₹1,200 sent to merchant@upi successfully.",
+         "read": True, "createdAt": int(time.time()) - 86400, "severity": "LOW"},
+        {"id": "n4", "type": "system", "title": "Security Tip",
+         "message": "Never share your UPI PIN with anyone, including bank officials.",
+         "read": True, "createdAt": int(time.time()) - 172800, "severity": "INFO"},
+    ]
+    return jsonify({"notifications": notifs, "unread_count": sum(1 for n in notifs if not n["read"])})
+
+
+@app.route('/transaction-limits/validate', methods=['POST'])
+def validate_transaction_limit():
+    """
+    Validate a proposed transaction amount against the user's configured daily limits.
+    Expects: { userId, amount, dailyLimit, perTxLimit, dailySpentSoFar }
+    """
+    try:
+        data = request.get_json() or {}
+        amount = float(data.get('amount', 0))
+        daily_limit = float(data.get('dailyLimit', 0))
+        per_tx_limit = float(data.get('perTxLimit', 0))
+        daily_spent = float(data.get('dailySpentSoFar', 0))
+
+        violations = []
+        if per_tx_limit > 0 and amount > per_tx_limit:
+            violations.append({
+                "type": "PER_TRANSACTION",
+                "message": f"Amount ₹{amount:,.0f} exceeds per-transaction limit of ₹{per_tx_limit:,.0f}",
+            })
+        if daily_limit > 0 and (daily_spent + amount) > daily_limit:
+            remaining = max(0, daily_limit - daily_spent)
+            violations.append({
+                "type": "DAILY",
+                "message": f"This would exceed your daily limit of ₹{daily_limit:,.0f}. Remaining: ₹{remaining:,.0f}",
+            })
+
+        return jsonify({
+            "allowed": len(violations) == 0,
+            "violations": violations,
+            "daily_remaining": max(0, daily_limit - daily_spent) if daily_limit > 0 else None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEK 2 — Split Bill & Recurring Payments
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/split-bill/calculate', methods=['POST'])
+def split_bill_calculate():
+    """
+    Calculate equal or custom splits for a group expense.
+    Expects: { totalAmount, members: [{name, upiId, sharePercent?}], splitType: 'equal'|'custom' }
+    """
+    try:
+        data = request.get_json() or {}
+        total = float(data.get('totalAmount', 0))
+        members = data.get('members', [])
+        split_type = data.get('splitType', 'equal')
+
+        if not members or total <= 0:
+            return jsonify({"error": "Invalid amount or members"}), 400
+
+        splits = []
+        if split_type == 'equal':
+            share = round(total / len(members), 2)
+            remainder = round(total - share * len(members), 2)
+            for i, m in enumerate(members):
+                splits.append({
+                    "name": m.get('name', ''),
+                    "upiId": m.get('upiId', ''),
+                    "amount": share + (remainder if i == 0 else 0),
+                    "paid": False,
+                })
+        else:
+            for m in members:
+                pct = float(m.get('sharePercent', 100 / len(members)))
+                splits.append({
+                    "name": m.get('name', ''),
+                    "upiId": m.get('upiId', ''),
+                    "amount": round(total * pct / 100, 2),
+                    "paid": False,
+                })
+
+        return jsonify({
+            "totalAmount": total,
+            "memberCount": len(members),
+            "splitType": split_type,
+            "splits": splits,
+            "generatedAt": datetime.utcnow().isoformat() + "Z",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/recurring-payments/next-dates', methods=['POST'])
+def recurring_next_dates():
+    """
+    Calculate next N execution dates for a recurring payment.
+    Expects: { frequency: 'daily'|'weekly'|'monthly', startDate, count }
+    """
+    try:
+        from datetime import timedelta
+        data = request.get_json() or {}
+        frequency = data.get('frequency', 'monthly')
+        start_str = data.get('startDate', datetime.utcnow().date().isoformat())
+        count = int(data.get('count', 6))
+
+        start = datetime.fromisoformat(start_str).date()
+        dates = []
+        current = start
+        for _ in range(count):
+            dates.append(current.isoformat())
+            if frequency == 'daily':
+                current += timedelta(days=1)
+            elif frequency == 'weekly':
+                current += timedelta(weeks=1)
+            else:
+                # Monthly — same day next month
+                month = current.month + 1
+                year = current.year + (month - 1) // 12
+                month = ((month - 1) % 12) + 1
+                import calendar
+                day = min(current.day, calendar.monthrange(year, month)[1])
+                current = current.replace(year=year, month=month, day=day)
+
+        return jsonify({"frequency": frequency, "nextDates": dates})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEK 3 — Savings Goals & EMI Calculator
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/savings-goals/projection', methods=['POST'])
+def savings_goal_projection():
+    """
+    Project whether a savings goal is achievable by the target date.
+    Expects: { targetAmount, savedSoFar, targetDate, monthlySaving }
+    """
+    try:
+        from datetime import timedelta
+        data = request.get_json() or {}
+        target = float(data.get('targetAmount', 0))
+        saved = float(data.get('savedSoFar', 0))
+        monthly = float(data.get('monthlySaving', 0))
+        target_date_str = data.get('targetDate', '')
+
+        remaining = max(0, target - saved)
+        pct = round((saved / target * 100) if target > 0 else 0, 1)
+
+        months_needed = 0
+        if monthly > 0:
+            months_needed = int(np.ceil(remaining / monthly))
+
+        on_track = False
+        months_remaining = None
+        if target_date_str:
+            target_dt = datetime.fromisoformat(target_date_str)
+            now = datetime.utcnow()
+            delta_months = (target_dt.year - now.year) * 12 + (target_dt.month - now.month)
+            months_remaining = max(0, delta_months)
+            required_monthly = round(remaining / months_remaining, 2) if months_remaining > 0 else remaining
+            on_track = monthly >= required_monthly
+        else:
+            required_monthly = None
+            on_track = months_needed <= 12
+
+        return jsonify({
+            "targetAmount": target,
+            "savedSoFar": saved,
+            "remaining": remaining,
+            "percentComplete": pct,
+            "monthsNeeded": months_needed,
+            "monthsRemaining": months_remaining,
+            "requiredMonthlySaving": required_monthly,
+            "onTrack": on_track,
+            "status": "ON_TRACK" if on_track else "BEHIND",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/emi/calculate', methods=['POST'])
+def emi_calculate():
+    """
+    Calculate EMI, total interest, and amortization schedule.
+    Expects: { principal, annualRate, tenureMonths }
+    """
+    try:
+        data = request.get_json() or {}
+        principal = float(data.get('principal', 0))
+        annual_rate = float(data.get('annualRate', 0))
+        tenure = int(data.get('tenureMonths', 12))
+
+        if principal <= 0 or tenure <= 0:
+            return jsonify({"error": "Invalid principal or tenure"}), 400
+
+        if annual_rate == 0:
+            emi = round(principal / tenure, 2)
+            total_payment = principal
+            total_interest = 0
+            schedule = [{"month": i + 1, "emi": emi, "principal": emi, "interest": 0,
+                         "balance": round(principal - emi * (i + 1), 2)} for i in range(tenure)]
+        else:
+            r = annual_rate / 12 / 100
+            emi = round(principal * r * (1 + r) ** tenure / ((1 + r) ** tenure - 1), 2)
+            total_payment = round(emi * tenure, 2)
+            total_interest = round(total_payment - principal, 2)
+            schedule = []
+            balance = principal
+            for i in range(tenure):
+                interest_part = round(balance * r, 2)
+                principal_part = round(emi - interest_part, 2)
+                balance = round(max(0, balance - principal_part), 2)
+                schedule.append({
+                    "month": i + 1,
+                    "emi": emi,
+                    "principal": principal_part,
+                    "interest": interest_part,
+                    "balance": balance,
+                })
+
+        return jsonify({
+            "principal": principal,
+            "annualRate": annual_rate,
+            "tenureMonths": tenure,
+            "monthlyEMI": emi,
+            "totalPayment": total_payment,
+            "totalInterest": total_interest,
+            "interestPercent": round(total_interest / principal * 100, 1) if principal > 0 else 0,
+            "amortizationSchedule": schedule,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEK 4 — Live Fraud Feed & Dispute Center
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/live-fraud-feed', methods=['GET'])
+def live_fraud_feed():
+    """
+    Return the latest fraud events for the live feed dashboard.
+    In production this would query Firestore; here we return from score_history.
+    """
+    try:
+        feed = []
+        history = state.get("score_history", [])
+        # Pull flagged entries from score history
+        for entry in reversed(history[-50:]):
+            verdict = entry.get("verdict", "SAFE")
+            if verdict in ("HIGH_RISK", "MEDIUM_RISK", "FRAUD"):
+                feed.append({
+                    "id": entry.get("id", ""),
+                    "timestamp": entry.get("timestamp", ""),
+                    "amount": entry.get("amount", 0),
+                    "verdict": verdict,
+                    "probability": entry.get("probability", 0),
+                    "recipientUPI": entry.get("recipientUPI", "unknown@upi"),
+                    "features": entry.get("top_features", []),
+                })
+            if len(feed) >= 20:
+                break
+
+        # Supplement with simulated events if feed is sparse
+        if len(feed) < 5:
+            import random
+            verdicts = ["HIGH_RISK", "MEDIUM_RISK", "HIGH_RISK", "MEDIUM_RISK", "HIGH_RISK"]
+            upis = ["suspicious99@okaxis", "unknown.merchant@ybl", "tempacct@paytm",
+                    "newuser2024@ibl", "bulk.transfer@sbi"]
+            for i in range(min(5, 5 - len(feed))):
+                feed.append({
+                    "id": f"sim_{i}_{int(time.time())}",
+                    "timestamp": datetime.utcfromtimestamp(time.time() - i * 180).isoformat() + "Z",
+                    "amount": random.choice([850, 2500, 7200, 15000, 450]),
+                    "verdict": verdicts[i],
+                    "probability": random.uniform(0.65, 0.98),
+                    "recipientUPI": upis[i],
+                    "features": ["High-Risk Transaction Times", "Device Fingerprinting"],
+                })
+
+        return jsonify({
+            "events": feed,
+            "totalFlagged": len(feed),
+            "fetchedAt": datetime.utcnow().isoformat() + "Z",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/disputes', methods=['POST'])
+def create_dispute():
+    """
+    Create a transaction dispute record.
+    Expects: { transactionId, userId, amount, recipientUPI, reason, description }
+    """
+    try:
+        data = request.get_json() or {}
+        required = ['transactionId', 'userId', 'reason']
+        for field in required:
+            if not data.get(field):
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+
+        dispute = {
+            "disputeId": f"DSP{int(time.time())}",
+            "transactionId": data['transactionId'],
+            "userId": data['userId'],
+            "amount": data.get('amount', 0),
+            "recipientUPI": data.get('recipientUPI', ''),
+            "reason": data['reason'],
+            "description": data.get('description', ''),
+            "status": "SUBMITTED",
+            "createdAt": datetime.utcnow().isoformat() + "Z",
+            "estimatedResolution": "3-5 business days",
+            "caseNumber": f"SAFE{int(time.time()) % 100000:05d}",
+        }
+
+        return jsonify({
+            "success": True,
+            "dispute": dispute,
+            "message": f"Dispute #{dispute['caseNumber']} filed successfully. You'll receive updates within 24 hours.",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/disputes/<dispute_id>', methods=['GET'])
+def get_dispute_status(dispute_id):
+    """Return status of a specific dispute."""
+    return jsonify({
+        "disputeId": dispute_id,
+        "status": "UNDER_REVIEW",
+        "statusHistory": [
+            {"status": "SUBMITTED", "timestamp": datetime.utcnow().isoformat() + "Z", "note": "Dispute received"},
+            {"status": "UNDER_REVIEW", "timestamp": datetime.utcnow().isoformat() + "Z", "note": "Assigned to fraud analyst"},
+        ],
+        "estimatedResolution": "2-3 business days",
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEK 5–8 ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/biometric-verify', methods=['POST'])
+def biometric_verify():
+    """Compare current typing pattern against stored baseline."""
+    data = request.json or {}
+    current_speed = data.get('currentSpeed', 0)
+    current_interval = data.get('currentInterval', 0)
+    baseline_speed = data.get('baselineSpeed', 0)
+    baseline_interval = data.get('baselineInterval', 0)
+
+    if baseline_speed == 0:
+        return jsonify({"status": "no_baseline", "deviation": 0, "risk": "unknown"})
+
+    speed_dev = abs(current_speed - baseline_speed) / max(baseline_speed, 1) * 100
+    interval_dev = abs(current_interval - baseline_interval) / max(baseline_interval, 1) * 100
+    deviation = round((speed_dev + interval_dev) / 2, 1)
+
+    risk = "low" if deviation < 20 else "medium" if deviation < 40 else "high"
+    return jsonify({
+        "deviation": deviation,
+        "risk": risk,
+        "speedDeviation": round(speed_dev, 1),
+        "intervalDeviation": round(interval_dev, 1),
+        "requireReauth": deviation > 40,
+    })
+
+
+@app.route('/spending-coach', methods=['POST'])
+def spending_coach():
+    """Generate AI spending insights from transaction summary."""
+    data = request.json or {}
+    total_spent = data.get('totalSpent', 0)
+    last_week = data.get('lastWeekSpent', 0)
+    top_category = data.get('topCategory', 'Other')
+    fraud_alerts = data.get('fraudAlerts', 0)
+    categories = data.get('categories', {})
+
+    insights = []
+    change_pct = round((total_spent - last_week) / max(last_week, 1) * 100, 1) if last_week else 0
+
+    if change_pct > 20:
+        insights.append({
+            "type": "warning",
+            "title": f"Spending Up {change_pct}%",
+            "message": f"You spent ₹{total_spent:,.0f} this week vs ₹{last_week:,.0f} last week. Consider reviewing discretionary expenses.",
+        })
+    elif change_pct < -15:
+        insights.append({
+            "type": "tip",
+            "title": f"Great Savings This Week!",
+            "message": f"Spending dropped {abs(change_pct)}% vs last week. Keep the momentum going!",
+        })
+
+    for cat, amt in categories.items():
+        if total_spent > 0 and amt / total_spent > 0.5:
+            insights.append({
+                "type": "alert",
+                "title": f"{cat} Dominates Spending",
+                "message": f"{cat} accounts for {amt/total_spent*100:.0f}% of total spend (₹{amt:,.0f}). Consider setting a category limit.",
+            })
+
+    if fraud_alerts > 0:
+        insights.append({
+            "type": "alert",
+            "title": f"{fraud_alerts} Fraud Alert(s) This Week",
+            "message": "High-risk transactions were detected. Review your Live Fraud Feed for details.",
+        })
+
+    if not insights:
+        insights.append({
+            "type": "tip",
+            "title": "Spending Looks Healthy",
+            "message": "No unusual patterns detected this week. You're on track!",
+        })
+
+    return jsonify({"insights": insights, "changePercent": change_pct, "topCategory": top_category})
+
+
+@app.route('/contact-trust', methods=['POST'])
+def contact_trust():
+    """Compute trust score for a payment contact."""
+    data = request.json or {}
+    tx_count = data.get('txCount', 0)
+    all_safe = data.get('allSafe', True)
+    high_risk_count = data.get('highRiskCount', 0)
+    medium_risk_count = data.get('mediumRiskCount', 0)
+    amount_std_dev_pct = data.get('amountStdDevPct', 50)
+    account_days = data.get('accountDays', 0)
+
+    score = 30  # base
+    if tx_count >= 5:
+        score += 20
+    if tx_count >= 10:
+        score += 10
+    if all_safe and high_risk_count == 0:
+        score += 25
+    score -= high_risk_count * 30
+    score -= medium_risk_count * 10
+    if amount_std_dev_pct < 20:
+        score += 15
+    if account_days > 30:
+        score += 10
+
+    score = max(0, min(100, score))
+    band = "TRUSTED" if score >= 80 else "KNOWN" if score >= 50 else "NEW" if score >= 20 else "SUSPICIOUS"
+    return jsonify({"score": score, "band": band})
+
+
+@app.route('/community-score/<path:upi_id>', methods=['GET'])
+def community_score(upi_id):
+    """Return aggregated community report score for a UPI ID."""
+    # In production this would query a database
+    # Returns mock aggregated data based on UPI pattern
+    return jsonify({
+        "upiId": upi_id,
+        "reportCount": 0,
+        "topReason": None,
+        "communityRiskBoost": 0,
+        "message": "No community reports found for this UPI.",
+    })
+
+
+@app.route('/fraud-forecast', methods=['POST'])
+def fraud_forecast():
+    """Generate 7-day fraud risk forecast."""
+    import math
+    data = request.json or {}
+    historical_fraud_rate = data.get('historicalFraudRate', 0.05)
+    day_of_week_today = data.get('dayOfWeekToday', 0)  # 0=Mon
+    recurring_days = data.get('recurringDays', [])  # day offsets with scheduled payments
+
+    DAY_FACTORS = [0.15, 0.12, 0.18, 0.20, 0.35, 0.45, 0.30]
+    forecast = []
+    for i in range(7):
+        dow = (day_of_week_today + i) % 7
+        base = DAY_FACTORS[dow] * 100
+        adjusted = min(99, base * (1 + historical_fraud_rate * 2))
+        with_recurring = min(99, adjusted + (15 if i in recurring_days else 0))
+        forecast.append({
+            "dayOffset": i,
+            "dayOfWeek": dow,
+            "baseRisk": round(adjusted, 1),
+            "withRecurring": round(with_recurring, 1),
+            "isHighRisk": with_recurring > 60,
+        })
+
+    return jsonify({"forecast": forecast})
+
+
+@app.route('/payment-health', methods=['POST'])
+def payment_health():
+    """Compute composite payment health score."""
+    data = request.json or {}
+    fraud_safety = data.get('fraudSafety', 80)
+    savings_rate = data.get('savingsRate', 50)
+    bill_consistency = data.get('billConsistency', 100)
+    spending_control = data.get('spendingControl', 80)
+    account_safety = data.get('accountSafety', 75)
+
+    composite = round(
+        fraud_safety * 0.30 +
+        savings_rate * 0.20 +
+        bill_consistency * 0.20 +
+        spending_control * 0.15 +
+        account_safety * 0.15
+    )
+
+    grade = "A+" if composite >= 90 else "A" if composite >= 80 else "B" if composite >= 65 else "C" if composite >= 50 else "D"
+    label = "EXCELLENT" if composite >= 90 else "GOOD" if composite >= 70 else "FAIR" if composite >= 50 else "POOR"
+
+    return jsonify({
+        "composite": composite,
+        "grade": grade,
+        "label": label,
+        "subScores": {
+            "fraudSafety": fraud_safety,
+            "savingsRate": savings_rate,
+            "billConsistency": bill_consistency,
+            "spendingControl": spending_control,
+            "accountSafety": account_safety,
+        }
+    })
+
+
+@app.route('/dark-pattern-check', methods=['POST'])
+def dark_pattern_check():
+    """Check UPI ID and remarks for known scam/dark patterns."""
+    import re
+    data = request.json or {}
+    upi = data.get('upiId', '')
+    remarks = data.get('remarks', '')
+    text = f"{upi} {remarks}".lower()
+
+    PATTERNS = [
+        (r'lottery|prize|winner|lucky\s*draw', 'Lottery Scam', 'Legitimate lotteries never require payment to claim prizes.'),
+        (r'kyc\s*update|kyc\s*verif|aadhar\s*link', 'KYC Fraud', 'Banks never request KYC updates via UPI payments.'),
+        (r'job\s*offer|work\s*from\s*home|earn\s*daily', 'Job Scam', 'Advance fee job scams demand payment to unlock jobs.'),
+        (r'refund|cashback\s*claim|tax\s*refund', 'Refund Scam', 'Refunds are never processed by sending money.'),
+        (r'otp|share\s*pin|verify\s*account|account\s*suspend', 'Phishing', 'Never share OTP or PIN over UPI.'),
+        (r'investment\s*return|double\s*money|guaranteed\s*profit', 'Investment Fraud', 'No investment guarantees doubled returns.'),
+        (r'electricity\s*cut|gas\s*supply|bill\s*overdue', 'Utility Scam', 'Utilities do not demand immediate UPI payments.'),
+        (r'covid|relief\s*fund|pm\s*cares', 'Charity Scam', 'Verify charity UPIs through official government sources.'),
+    ]
+
+    for pattern, label, detail in PATTERNS:
+        if re.search(pattern, text):
+            return jsonify({"detected": True, "label": label, "detail": detail, "riskBoost": 30})
+
+    return jsonify({"detected": False, "label": None, "detail": None, "riskBoost": 0})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -16,7 +16,7 @@ import Header from "./Header"
 import SidebarContent from "./SidebarContent"
 import { auth, db } from './firebase'
 import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth'
-import { doc, getDoc, updateDoc } from 'firebase/firestore'
+import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getInitials(name) {
@@ -621,9 +621,337 @@ const SettingsPage = () => {
               )}
             </CardContent>
           </Card>
+
+          {/* ── Transaction PIN ──────────────────────────────────────── */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+            <PinSection firebaseUser={firebaseUser} />
+          </motion.div>
+
+          {/* ── Biometric ────────────────────────────────────────────── */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}>
+            <BiometricSection firebaseUser={firebaseUser} />
+          </motion.div>
+
+          {/* ── Transaction Limits ───────────────────────────────────── */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}>
+            <TransactionLimitsSection firebaseUser={firebaseUser} />
+          </motion.div>
+
         </motion.div>
       </main>
     </div>
+  )
+}
+
+function PinSection({ firebaseUser }) {
+  const [pin, setPin] = useState("")
+  const [confirmPin, setConfirmPin] = useState("")
+  const [currentPin, setCurrentPin] = useState("")
+  const [hasPin, setHasPin] = useState(false)
+  const [status, setStatus] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!firebaseUser) return
+    getDoc(doc(db, "users", firebaseUser.uid)).then(snap => {
+      if (snap.exists() && snap.data().transactionPin) setHasPin(true)
+    }).catch(() => {})
+  }, [firebaseUser])
+
+  const handleSavePin = async () => {
+    setStatus("")
+    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) { setStatus("PIN must be exactly 4 digits."); return }
+    if (pin !== confirmPin) { setStatus("PINs do not match."); return }
+    if (hasPin && currentPin.length !== 4) { setStatus("Enter your current PIN to change it."); return }
+    if (!firebaseUser) return
+    setSaving(true)
+    try {
+      if (hasPin) {
+        const snap = await getDoc(doc(db, "users", firebaseUser.uid))
+        if (snap.exists() && snap.data().transactionPin !== currentPin) {
+          setStatus("Current PIN is incorrect."); setSaving(false); return
+        }
+      }
+      await setDoc(doc(db, "users", firebaseUser.uid), { transactionPin: pin }, { merge: true })
+      setHasPin(true)
+      setPin(""); setConfirmPin(""); setCurrentPin("")
+      setStatus("Transaction PIN saved successfully.")
+    } catch { setStatus("Failed to save PIN. Please try again.") }
+    finally { setSaving(false) }
+  }
+
+  const handleRemovePin = async () => {
+    if (!firebaseUser) return
+    if (currentPin.length !== 4) { setStatus("Enter your current PIN to remove it."); return }
+    setSaving(true)
+    try {
+      const snap = await getDoc(doc(db, "users", firebaseUser.uid))
+      if (snap.exists() && snap.data().transactionPin !== currentPin) {
+        setStatus("Current PIN is incorrect."); setSaving(false); return
+      }
+      await updateDoc(doc(db, "users", firebaseUser.uid), { transactionPin: null })
+      setHasPin(false)
+      setPin(""); setConfirmPin(""); setCurrentPin("")
+      setStatus("Transaction PIN removed.")
+    } catch { setStatus("Failed to remove PIN.") }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Card className="bg-gray-800/60 border-gray-700">
+      <CardHeader className="pb-3 border-b border-gray-700">
+        <div className="flex items-center gap-2">
+          <Shield className="h-5 w-5 text-blue-400" />
+          <h2 className="text-base font-semibold text-gray-100">Transaction PIN</h2>
+          {hasPin && <span className="text-xs bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full">Active</span>}
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          Required for payments of ₹5,000 and above. Leave blank to disable.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-3">
+        {hasPin && (
+          <div>
+            <label className="text-xs font-medium text-gray-400 block mb-1">Current PIN</label>
+            <input
+              type="password"
+              maxLength={4}
+              value={currentPin}
+              onChange={e => setCurrentPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+              placeholder="Enter current 4-digit PIN"
+              className="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm tracking-widest"
+            />
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-gray-400 block mb-1">New PIN</label>
+            <input
+              type="password"
+              maxLength={4}
+              value={pin}
+              onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+              placeholder="4 digits"
+              className="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm tracking-widest"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-400 block mb-1">Confirm PIN</label>
+            <input
+              type="password"
+              maxLength={4}
+              value={confirmPin}
+              onChange={e => setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+              placeholder="4 digits"
+              className="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm tracking-widest"
+            />
+          </div>
+        </div>
+        {status && (
+          <p className={`text-xs ${status.includes("success") || status.includes("saved") || status.includes("removed") ? "text-green-400" : "text-red-400"}`}>
+            {status}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <Button onClick={handleSavePin} disabled={saving} className="bg-blue-600 hover:bg-blue-700 h-9 px-5 text-sm">
+            {saving ? "Saving…" : hasPin ? "Change PIN" : "Set PIN"}
+          </Button>
+          {hasPin && (
+            <Button onClick={handleRemovePin} disabled={saving} variant="outline" className="border-red-500/40 text-red-400 hover:bg-red-500/10 h-9 px-5 text-sm">
+              Remove PIN
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function BiometricSection({ firebaseUser }) {
+  const [supported, setSupported] = useState(false)
+  const [enabled, setEnabled] = useState(false)
+  const [status, setStatus] = useState("")
+
+  useEffect(() => {
+    if (!firebaseUser) return
+    if (window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable) {
+      window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        .then(setSupported)
+        .catch(() => setSupported(false))
+    }
+    setEnabled(localStorage.getItem(`safepay_bio_${firebaseUser.uid}`) === "1")
+  }, [firebaseUser])
+
+  const handleEnable = () => {
+    localStorage.setItem(`safepay_bio_${firebaseUser.uid}`, "1")
+    setEnabled(true)
+    setStatus("Biometric enabled! Use fingerprint or face when confirming payments.")
+  }
+
+  const handleRemove = () => {
+    localStorage.removeItem(`safepay_bio_${firebaseUser.uid}`)
+    setEnabled(false)
+    setStatus("Biometric disabled.")
+  }
+
+  return (
+    <Card className="bg-gray-800/60 border-gray-700">
+      <CardHeader className="pb-3 border-b border-gray-700">
+        <div className="flex items-center gap-2">
+          <Fingerprint className="h-5 w-5 text-blue-400" />
+          <h2 className="text-base font-semibold text-gray-100">Biometric Authentication</h2>
+          {enabled && <span className="text-xs bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full">Enabled</span>}
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          Use fingerprint or Face ID to confirm payments instead of typing your PIN.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-3">
+        {!supported ? (
+          <p className="text-sm text-yellow-400">
+            Your browser or device does not support biometric authentication.
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-300">
+              {enabled
+                ? "Biometric is enabled. Tap 'Use Fingerprint / Face ID' when making a payment."
+                : "Enable biometric to confirm payments using fingerprint or Face ID instead of PIN."}
+            </p>
+            {status && (
+              <p className={`text-xs ${status.includes("enabled") || status.includes("disabled") ? "text-green-400" : "text-red-400"}`}>
+                {status}
+              </p>
+            )}
+            <div className="flex gap-2">
+              {!enabled ? (
+                <Button
+                  onClick={handleEnable}
+                  className="bg-blue-600 hover:bg-blue-700 h-9 px-5 text-sm flex items-center gap-2"
+                >
+                  <Fingerprint className="h-4 w-4" />
+                  Enable Fingerprint / Face ID
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleRemove}
+                  variant="outline"
+                  className="border-red-500/40 text-red-400 hover:bg-red-500/10 h-9 px-5 text-sm"
+                >
+                  Disable Biometric
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Transaction Limits Section ────────────────────────────────────────────────
+function TransactionLimitsSection({ firebaseUser }) {
+  const [dailyLimit, setDailyLimit]   = useState("")
+  const [perTxLimit, setPerTxLimit]   = useState("")
+  const [enabled, setEnabled]         = useState(false)
+  const [status, setStatus]           = useState("")
+  const [saving, setSaving]           = useState(false)
+
+  useEffect(() => {
+    if (!firebaseUser) return
+    getDoc(doc(db, "users", firebaseUser.uid)).then(snap => {
+      if (snap.exists() && snap.data().transactionLimits) {
+        const lim = snap.data().transactionLimits
+        setDailyLimit(lim.daily?.toString() || "")
+        setPerTxLimit(lim.perTransaction?.toString() || "")
+        setEnabled(lim.enabled ?? false)
+      }
+    }).catch(() => {})
+  }, [firebaseUser])
+
+  const handleSave = async () => {
+    setStatus("")
+    if (!firebaseUser) return
+    setSaving(true)
+    try {
+      await setDoc(doc(db, "users", firebaseUser.uid), {
+        transactionLimits: {
+          enabled,
+          daily: dailyLimit ? parseFloat(dailyLimit) : null,
+          perTransaction: perTxLimit ? parseFloat(perTxLimit) : null,
+        }
+      }, { merge: true })
+      setStatus("Transaction limits saved successfully.")
+    } catch {
+      setStatus("Failed to save limits. Please try again.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const isOk = s => s.toLowerCase().includes("success")
+
+  return (
+    <Card className="bg-gray-800/60 border-gray-700">
+      <CardHeader className="pb-3 border-b border-gray-700">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sliders className="h-5 w-5 text-orange-400" />
+            <h2 className="text-base font-semibold text-gray-100">Transaction Limits</h2>
+            {enabled && <span className="text-xs bg-orange-500/20 text-orange-400 border border-orange-500/30 px-2 py-0.5 rounded-full">Active</span>}
+          </div>
+          <Toggle checked={enabled} onChange={() => setEnabled(p => !p)} />
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          Set daily or per-transaction caps to protect against overspending or fraud.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-4">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 transition-opacity ${!enabled ? "opacity-40 pointer-events-none" : ""}`}>
+          <div className="space-y-1">
+            <Label className="text-xs font-medium text-gray-400">Daily Limit (₹)</Label>
+            <Input
+              type="number" min="0" placeholder="e.g. 10000"
+              value={dailyLimit}
+              onChange={e => setDailyLimit(e.target.value)}
+              className="bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-500 h-9"
+            />
+            <p className="text-xs text-gray-500">Max total amount you can send in one day</p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs font-medium text-gray-400">Per-Transaction Limit (₹)</Label>
+            <Input
+              type="number" min="0" placeholder="e.g. 5000"
+              value={perTxLimit}
+              onChange={e => setPerTxLimit(e.target.value)}
+              className="bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-500 h-9"
+            />
+            <p className="text-xs text-gray-500">Max amount per single payment</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 bg-gray-700/30 rounded-lg px-3 py-2 text-xs text-gray-400">
+          <AlertTriangle className="h-3.5 w-3.5 text-yellow-400 flex-shrink-0" />
+          Transactions exceeding these limits will be blocked until you override with your PIN.
+        </div>
+
+        {status && (
+          <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${
+            isOk(status) ? "bg-green-500/10 border border-green-500/30 text-green-400"
+                         : "bg-red-500/10 border border-red-500/30 text-red-400"}`}>
+            {isOk(status) ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+            {status}
+          </div>
+        )}
+
+        <Button onClick={handleSave} disabled={saving}
+          className="bg-orange-600 hover:bg-orange-500 text-white h-9 px-5">
+          {saving
+            ? <><div className="h-3.5 w-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />Saving…</>
+            : <><Save className="h-4 w-4 mr-1.5" />Save Limits</>}
+        </Button>
+      </CardContent>
+    </Card>
   )
 }
 

@@ -14,8 +14,9 @@ import {
   AlertCircle, CheckCircle, XCircle, ShieldAlert, Shield,
   ShieldCheck, Upload, RefreshCw, Clock, Lightbulb, BarChart2,
   Users, Zap, Brain, Ban, Eye, ThumbsUp,
-  ArrowRight, Layers, Microscope, GitCompare,
+  ArrowRight, Layers, Microscope, GitCompare, Download,
 } from "lucide-react";
+import { generateSingleTransactionReport } from "@/lib/generateFraudReport";
 
 // ── Fraud Probability Arc Gauge ───────────────────────────────────────────────
 function FraudGauge({ probability }) {
@@ -498,6 +499,18 @@ export default function CheckTransaction() {
                     </CardContent>
                   </Card>
                 )}
+
+                {/* Download PDF Report */}
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => generateSingleTransactionReport(result, new Date())}
+                    variant="outline"
+                    size="sm"
+                    className="border-blue-500/40 text-blue-400 hover:bg-blue-500/10 flex items-center gap-1.5"
+                  >
+                    <Download className="h-4 w-4" /> Download PDF Report
+                  </Button>
+                </div>
 
                 {/* ── Bottom next steps ── */}
                 <div className="flex flex-wrap gap-2 p-3 bg-gray-800/80 border border-gray-700 rounded-xl">

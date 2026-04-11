@@ -1,0 +1,33 @@
+flowchart TD
+    A([User initiates payment]) --> B{UPI in fraud blocklist?}
+    B -->|YES — instant| C["🔴 HIGH RISK\nBlock immediately\nSend Firestore notification"]
+    B -->|NO| D[Fetch 22 transaction features]
+    D --> E{Dark pattern in remarks?}
+    E -->|YES| F["⚠️ Show warning banner"]
+    E -->|NO| G[Call /check-single]
+    F --> G
+    G --> H{Ensemble verdict}
+    H -->|"score ≥ 0.70"| I["🔴 HIGH RISK → BLOCK"]
+    H -->|"score 0.40–0.69"| J["🟡 MEDIUM → REVIEW"]
+    H -->|"score < 0.40"| K["🟢 LOW → APPROVE"]
+    I --> L[Blocked modal + notification]
+    J --> M[Warning shown, user chooses]
+    K --> N[Auth Choice Screen]
+    M --> N
+    N --> O{Biometric method}
+    O -->|Fingerprint/Face| P["WebAuthn\nnavigator.credentials.get"]
+    O -->|Pattern Lock| Q["3×3 grid verify\nvs localStorage"]
+    O -->|PIN| R[4-digit PIN verify]
+    P & Q & R -->|Verified| S[Process transaction]
+    S --> T[Firestore write + notification]
+    T --> U([Dashboard updated])
+
+    style A fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    style C fill:#7c2d12,stroke:#ef4444,color:#fff
+    style I fill:#7c2d12,stroke:#ef4444,color:#fff
+    style L fill:#7c2d12,stroke:#ef4444,color:#fff
+    style J fill:#78350f,stroke:#f59e0b,color:#fff
+    style M fill:#78350f,stroke:#f59e0b,color:#fff
+    style K fill:#14532d,stroke:#22c55e,color:#fff
+    style N fill:#14532d,stroke:#22c55e,color:#fff
+    style U fill:#14532d,stroke:#22c55e,color:#fff

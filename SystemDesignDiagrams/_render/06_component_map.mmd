@@ -1,0 +1,72 @@
+graph TB
+    APP(["⚙️ App.jsx\nReact Router · 30+ routes"])
+
+    subgraph LAYOUT["Shared Layout"]
+        SB["🗂️ SidebarContent\nAegisAI brand\nNavigation · ML section"]
+        HDR["🔝 Header\nUser avatar · Balance · Bell"]
+    end
+
+    subgraph W1["Week 1 — Core Platform"]
+        DASH["📊 Dashboard"]
+        HOME["💸 Homepage / Send Money\nUPI verify · dark pattern\nknown fraud blocklist"]
+        TSIM["🔐 TransactionSimulation\nWebAuthn · Pattern lock · PIN\n5 states: auth/process/success/blocked/error"]
+        QR["📷 QR Pay"]
+        BUD["💰 Budget"]
+        AIA["🤖 AI Assistant"]
+        NOTIF["🔔 Notifications"]
+        HIST["📋 Transactions"]
+        STMT["📄 Statements"]
+        BEN["👥 Beneficiaries"]
+    end
+
+    subgraph W234["Weeks 2–4 — Tools & Fraud Ops"]
+        SPLIT["✂️ Split Bill"]
+        RECUR["🔁 Recurring Payments"]
+        SAV["🎯 Savings Goals"]
+        EMI["🧮 EMI Calculator"]
+        LIVE["⚡ Live Fraud Feed"]
+        DISP["⚖️ Dispute Center"]
+    end
+
+    subgraph W5678["Weeks 5–8 — AI & Intelligence"]
+        BIO["👆 BiometricGuard\nKeystroke calibration\nprotection toggles"]
+        COACH["🧠 SpendingCoach\nCategory pie · 7-day trend\nInsights · AI chat"]
+        TRUST["🤝 ContactTrustScore\n0–100 gauge"]
+        COMM["🌐 CommunityReports\nReports · Votes · Leaderboard"]
+        FTL["📈 FraudTimeline\n7-day forecast"]
+        PHLT["❤️ PaymentHealth\nSVG gauge · A+→D"]
+        BDGE["🏆 SecurityBadges\n20 badges · XP · Levels"]
+    end
+
+    subgraph ML["ML Analytics Suite  20 components"]
+        CT["🔍 CheckTransaction\nArc gauge 0–100%"]
+        BC["📦 BatchCheck\n50 tx bulk"]
+        AIHB["🤖 AIHub\nClusters · Trends"]
+        UP["📤 UploadData\nAI quality grade A–D"]
+        EX["🔬 ExploreData"]
+        RUN["▶️ RunDetection\nQuick/Balanced/Precision"]
+        DRES["📊 DetectionResults"]
+        MC["⚖️ ModelComparison"]
+        FH["🗺️ FraudHeatmap"]
+        NA["🕸️ NetworkAnalysis"]
+        RP["👤 RiskProfile"]
+        SH["📝 ScoreHistory"]
+        WL["👁️ Watchlist"]
+        FI["📊 FeatureInsights"]
+        BA["🧬 BehavioralAnalysis"]
+        DD["📉 DatasetDrift"]
+    end
+
+    APP --> LAYOUT
+    APP --> W1
+    APP --> W234
+    APP --> W5678
+    APP --> ML
+    HOME --> TSIM
+
+    style APP fill:#1e3a5f,stroke:#60a5fa,color:#dbeafe
+    style LAYOUT fill:#1e293b,stroke:#64748b,color:#e2e8f0
+    style W1 fill:#052e16,stroke:#22c55e,color:#bbf7d0
+    style W234 fill:#431407,stroke:#f97316,color:#fed7aa
+    style W5678 fill:#2e1065,stroke:#a78bfa,color:#ede9fe
+    style ML fill:#0f172a,stroke:#475569,color:#cbd5e1

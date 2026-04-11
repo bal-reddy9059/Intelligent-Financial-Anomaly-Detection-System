@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth, db } from "./firebase.js";
 import { signOut, onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, query, where, getDocs } from "firebase/firestore";
 import Header from "./Header.jsx";
 import SidebarContent from "./SidebarContent";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DollarSign, CreditCard, Activity, Zap, Send, ShieldCheck,
   ArrowUpRight, AlertTriangle, TrendingUp, ShieldAlert,
-  BrainCircuit, ShieldX
+  BrainCircuit, ShieldX, Map, Lock, Unlock,
 } from 'lucide-react';
 import { motion } from "framer-motion";
 import { Line, LineChart, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
@@ -27,7 +27,21 @@ const Dashboard = () => {
   const [transactions, setTransactions] = useState([]);
   const [recentTx, setRecentTx] = useState([]);
   const [mlStats, setMlStats] = useState(null);
+  const [frozen, setFrozen] = useState(false);
+  const [freezeLoading, setFreezeLoading] = useState(false);
   const navigate = useNavigate();
+
+  const toggleFreeze = async () => {
+    const cu = auth.currentUser;
+    if (!cu) return;
+    setFreezeLoading(true);
+    try {
+      const next = !frozen;
+      await updateDoc(doc(db, "users", cu.uid), { frozen: next });
+      setFrozen(next);
+    } catch { /* ignore */ }
+    finally { setFreezeLoading(false); }
+  };
 
   const handleSignOut = async () => {
     try {
@@ -44,17 +58,47 @@ const Dashboard = () => {
       if (!currentUser) return;
       setUser(currentUser);
 
-      const userRef = doc(db, "users", currentUser.uid);
-      const userDoc = await getDoc(userRef);
-      if (!userDoc.exists()) return;
+      // Generate a deterministic UPI from auth data immediately (no Firestore wait)
+      const baseName = (currentUser.displayName || currentUser.email || "user")
+        .split(/[ @]/)[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+      const uidSuffix = currentUser.uid.slice(-4).toLowerCase();
+      const fallbackUpi = `${baseName}${uidSuffix}@yesbank`;
 
-      const userData = userDoc.data();
-      setUpiId(userData.upiId);
-      setBalance(userData.balance ?? 50000);
+      const userRef = doc(db, "users", currentUser.uid);
+      let resolvedUpiId = fallbackUpi;
+
+      try {
+        const userDoc = await getDoc(userRef);
+
+        if (!userDoc.exists()) {
+          await setDoc(userRef, {
+            uid: currentUser.uid,
+            name: currentUser.displayName,
+            email: currentUser.email,
+            photoURL: currentUser.photoURL,
+            upiId: fallbackUpi,
+            balance: 50000,
+            createdAt: serverTimestamp(),
+          });
+          setBalance(50000);
+        } else {
+          const userData = userDoc.data();
+          resolvedUpiId = userData.upiId || fallbackUpi;
+          if (!userData.upiId) {
+            await updateDoc(userRef, { upiId: fallbackUpi });
+          }
+          setBalance(userData.balance ?? 50000);
+          setFrozen(userData.frozen ?? false);
+        }
+      } catch {
+        // Firestore unavailable — use fallback UPI, keep default balance
+      }
+
+      setUpiId(resolvedUpiId);
 
       const txQuery = query(
         collection(db, "transactions"),
-        where("senderUPI", "==", userData.upiId)
+        where("senderUPI", "==", resolvedUpiId)
       );
       const txSnapshot = await getDocs(txQuery);
       const txList = txSnapshot.docs
@@ -177,14 +221,46 @@ const Dashboard = () => {
               <p className="text-sm text-gray-400">UPI ID: {upiId}</p>
             </div>
           </div>
-          <Button
-            onClick={handleSignOut}
-            variant="destructive"
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 transition-colors duration-200"
-          >
-            Sign Out
-          </Button>
+          <div className="flex items-center gap-2 mt-4">
+            <Button
+              onClick={toggleFreeze}
+              disabled={freezeLoading}
+              variant="outline"
+              className={`flex items-center gap-2 border px-4 py-2 transition-colors duration-200 ${
+                frozen
+                  ? "border-red-500/60 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                  : "border-gray-600 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              {frozen ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+              {freezeLoading ? "…" : frozen ? "Frozen" : "Freeze Account"}
+            </Button>
+            <Button
+              onClick={handleSignOut}
+              variant="destructive"
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 transition-colors duration-200"
+            >
+              Sign Out
+            </Button>
+          </div>
         </motion.div>
+
+        {/* Frozen Banner */}
+        {frozen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 bg-red-500/10 border border-red-500/40 rounded-xl p-4 mb-5"
+          >
+            <Lock className="h-5 w-5 text-red-400 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-red-300 font-semibold text-sm">Account Frozen</p>
+              <p className="text-red-400/70 text-xs">
+                All outgoing payments are blocked. Click &quot;Frozen&quot; above to unfreeze your account.
+              </p>
+            </div>
+          </motion.div>
+        )}
 
         {/* High Spending Warning */}
         {isHighSpending && (
@@ -363,6 +439,61 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             </motion.div>
+          );
+        })()}
+
+        {/* Risk Profile + Heatmap shortcuts */}
+        {(() => {
+          const fraudTx = transactions.filter(tx => tx.fraudVerdict === "FRAUD");
+          const fraudRate = transactions.length > 0 ? (fraudTx.length / transactions.length) * 100 : 0;
+          const riskScore = Math.max(0, Math.round(100 - fraudRate * 5));
+          const riskLevel = riskScore >= 85 ? "LOW" : riskScore >= 60 ? "MEDIUM" : "HIGH";
+          const riskColor = riskLevel === "LOW" ? "text-green-400 border-green-500/30 bg-green-500/10"
+            : riskLevel === "MEDIUM" ? "text-yellow-400 border-yellow-500/30 bg-yellow-500/10"
+            : "text-red-400 border-red-500/30 bg-red-500/10";
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              {/* Risk Profile teaser */}
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                <Card className={`border ${riskColor} bg-gray-800 hover:bg-gray-750 transition-colors cursor-pointer`}
+                  onClick={() => navigate("/risk-profile")}>
+                  <CardHeader className="flex flex-row items-center justify-between pb-1">
+                    <CardTitle className="text-sm text-gray-400 flex items-center gap-2">
+                      <ShieldAlert className="h-4 w-4" /> Behavioural Risk Profile
+                    </CardTitle>
+                    <ArrowUpRight className="h-3.5 w-3.5 text-gray-500" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-3">
+                      <p className={`text-3xl font-bold ${riskColor.split(" ")[0]}`}>{riskScore}</p>
+                      <div>
+                        <p className={`text-xs font-bold ${riskColor.split(" ")[0]}`}>{riskLevel} RISK</p>
+                        <p className="text-xs text-gray-500">View full profile →</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* Fraud Heatmap teaser */}
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+                <Card className="border border-blue-500/30 bg-blue-500/5 bg-gray-800 hover:bg-gray-750 transition-colors cursor-pointer"
+                  onClick={() => navigate("/fraud-heatmap")}>
+                  <CardHeader className="flex flex-row items-center justify-between pb-1">
+                    <CardTitle className="text-sm text-gray-400 flex items-center gap-2">
+                      <Map className="h-4 w-4" /> Fraud Heatmap
+                    </CardTitle>
+                    <ArrowUpRight className="h-3.5 w-3.5 text-gray-500" />
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-blue-400 font-semibold text-sm">Category & Hour Analysis</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      See which spending categories and times carry the highest fraud risk
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </div>
           );
         })()}
 

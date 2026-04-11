@@ -17,6 +17,7 @@ import {
   ChevronRight, AlertCircle, Target, TrendingUp, Activity,
   Download, Brain, Lightbulb, ShieldAlert, CheckCircle,
   GitCompare, ScanSearch, Layers, Microscope, ArrowRight, RotateCcw,
+  Search, X,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -90,6 +91,11 @@ export default function DetectionResults() {
   const [showSummary, setShowSummary] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [error, setError] = useState("");
+  const [explainIdx, setExplainIdx] = useState("");
+  const [explainResult, setExplainResult] = useState(null);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState("");
+  const [exportLoading, setExportLoading] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -149,6 +155,35 @@ export default function DetectionResults() {
     URL.revokeObjectURL(url);
   };
 
+  const explainTransaction = async () => {
+    const idx = parseInt(explainIdx);
+    if (isNaN(idx) || idx < 0) { setExplainError("Enter a valid non-negative index."); return; }
+    setExplainLoading(true); setExplainError(""); setExplainResult(null);
+    try {
+      const res = await axios.get(`${API}/explain/${idx}`);
+      setExplainResult(res.data);
+    } catch (e) {
+      setExplainError(e.response?.data?.error || `Could not explain transaction at index ${idx}.`);
+    } finally { setExplainLoading(false); }
+  };
+
+  const exportFromBackend = async () => {
+    setExportLoading(true);
+    try {
+      const res = await axios.get(`${API}/export-results?source=detection`);
+      if (res.data.csv_content) {
+        const blob = new Blob([res.data.csv_content], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `detection_export_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch { /* fall back silently */ }
+    finally { setExportLoading(false); }
+  };
+
   const rocData = model?.roc_fpr?.map((fpr, i) => ({
     fpr: parseFloat(fpr.toFixed(3)),
     tpr: parseFloat((model.roc_tpr[i] ?? 0).toFixed(3)),
@@ -181,10 +216,16 @@ export default function DetectionResults() {
                 </button>
               ))}
               {model && !model.error && (
-                <Button onClick={exportCSV} size="sm" variant="outline"
-                  className="border-gray-600 text-gray-300 hover:text-white flex items-center gap-1">
-                  <Download className="h-4 w-4" /> Export CSV
-                </Button>
+                <>
+                  <Button onClick={exportCSV} size="sm" variant="outline"
+                    className="border-gray-600 text-gray-300 hover:text-white flex items-center gap-1">
+                    <Download className="h-4 w-4" /> Export CSV
+                  </Button>
+                  <Button onClick={exportFromBackend} size="sm" variant="outline" disabled={exportLoading}
+                    className="border-blue-600 text-blue-400 hover:text-white flex items-center gap-1">
+                    <Download className="h-4 w-4" /> {exportLoading ? "Exporting…" : "Full Export"}
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -411,6 +452,68 @@ export default function DetectionResults() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* ── Explain Transaction by Index ── */}
+              <Card className="bg-gray-800 border-gray-700">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base text-cyan-400 flex items-center gap-2">
+                    <Search className="h-4 w-4" /> Explain Transaction by Index
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-gray-400">Enter a dataset row index (0-based) to get a full AI explanation for that transaction.</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="number" min="0" value={explainIdx}
+                      onChange={(e) => { setExplainIdx(e.target.value); setExplainResult(null); setExplainError(""); }}
+                      placeholder="e.g. 42"
+                      className="flex-1 bg-gray-700 border border-gray-600 text-white text-sm rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    />
+                    <Button onClick={explainTransaction} disabled={explainLoading || !explainIdx}
+                      className="bg-cyan-600 hover:bg-cyan-700 flex items-center gap-1">
+                      <Search className="h-4 w-4" /> {explainLoading ? "Explaining…" : "Explain"}
+                    </Button>
+                  </div>
+                  {explainError && (
+                    <p className="text-red-400 text-xs flex items-center gap-1"><AlertCircle className="h-3.5 w-3.5" /> {explainError}</p>
+                  )}
+                  {explainResult && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                      className={`rounded-xl border p-4 space-y-3 ${
+                        explainResult.verdict === "FRAUD" ? "border-red-500/30 bg-red-500/8" : "border-green-500/30 bg-green-500/8"
+                      }`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className={`font-bold text-lg ${explainResult.verdict === "FRAUD" ? "text-red-400" : "text-green-400"}`}>
+                            {explainResult.verdict}
+                          </span>
+                          <span className="text-gray-400 text-sm ml-2">· {explainResult.fraud_probability}% · {explainResult.risk_level}</span>
+                        </div>
+                        <button onClick={() => setExplainResult(null)} className="text-gray-500 hover:text-white">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      {explainResult.ai_insight && (
+                        <p className="text-xs text-gray-300 italic">{explainResult.ai_insight}</p>
+                      )}
+                      {explainResult.suspicious_features?.length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-400 mb-1.5">Suspicious Features:</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {explainResult.suspicious_features.map((f, i) => (
+                              <div key={i} className="bg-gray-700/60 rounded p-2 text-xs">
+                                <span className="text-yellow-400 font-medium">{f.feature}: </span>
+                                <span className="text-white font-mono">{typeof f.value === "number" ? f.value.toFixed(3) : f.value}</span>
+                                <span className="text-gray-400"> — {f.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </CardContent>
+              </Card>
 
               {/* ── Continue Your Analysis ── */}
               <Card className="bg-gradient-to-br from-blue-900/30 to-purple-900/20 border-blue-500/30">

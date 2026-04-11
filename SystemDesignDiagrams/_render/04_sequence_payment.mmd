@@ -1,0 +1,40 @@
+sequenceDiagram
+    actor User
+    participant React as React App
+    participant Blocklist as Fraud UPI Blocklist
+    participant Flask as Flask API
+    participant Firestore as Firestore DB
+    participant WebAuthn as WebAuthn / Pattern Lock
+
+    User->>React: Enter UPI, Amount, Remarks → Click Verify
+    React->>Blocklist: Check KNOWN_FRAUD_UPIS (client-side, instant)
+
+    alt UPI is in blocklist
+        Blocklist-->>React: HIGH_RISK score + scenario
+        React-->>User: 🔴 HIGH RISK badge (no API call)
+    else UPI not in blocklist
+        React->>Firestore: getDoc users/recipientUPI
+        Firestore-->>React: Recipient name
+        React->>Flask: POST /check-single with 22 features
+        Flask-->>React: risk_level · probability · action
+        React-->>User: Risk badge + AI insight
+    end
+
+    Note over React,User: Dark pattern check runs in parallel
+    React->>React: checkDarkPatterns(remarks) — 8 regex
+    alt Scam phrase detected
+        React-->>User: ⚠️ Dark pattern warning banner
+    end
+
+    User->>React: Click Confirm Transaction
+    alt risk_level is HIGH
+        React-->>User: 🚫 Transaction Blocked modal
+        React->>Firestore: addDoc notifications fraud_alert
+    else risk_level is MEDIUM or LOW
+        React-->>User: Auth Choice Screen
+        User->>WebAuthn: Choose Fingerprint / Pattern / PIN
+        WebAuthn-->>React: Verified
+
+        React->>Firestore: addDoc transactions payload
+        React-->>User: ✅ Transaction Success
+    end

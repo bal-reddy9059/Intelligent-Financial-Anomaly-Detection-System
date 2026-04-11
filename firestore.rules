@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{userId} {
+      // Allow any logged-in user to READ user docs (needed for UPI recipient lookup)
+      allow read: if request.auth != null;
+      // Only allow WRITING your own document
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /transactions/{txId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    match /notifications/{notificationId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /beneficiaries/{benId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /cooldowns/{cooldownId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Week 1 — Transaction Limits stored inside /users/{userId} (already covered above)
+
+    // Week 2 — Split Bill Groups
+    match /splitGroups/{groupId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Week 2 — Recurring Payments
+    match /recurringPayments/{payId} {
+      allow read, write: if request.auth != null
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    // Week 3 — Savings Goals
+    match /savingsGoals/{goalId} {
+      allow read, write: if request.auth != null
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    // Week 4 — Transaction Disputes
+    match /disputes/{disputeId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Week 4 — Live Fraud Feed events (read-only for users, system writes)
+    match /liveFraudFeed/{feedId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Week 5 — Biometric profiles (own data only)
+    match /biometricProfiles/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Week 6 — AI Coach chat history (own data only)
+    match /coachChats/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Week 7 — Community fraud reports (any auth user can read/write)
+    match /communityReports/{reportId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+    }
+
+    // Week 8 — User badges and achievements (own data only)
+    match /userBadges/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
