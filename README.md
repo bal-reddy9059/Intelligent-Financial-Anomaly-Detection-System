@@ -597,4 +597,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-*Built with ❤️ for the DigiPay Pro NPCI Competition — IIT Bombay Techfest 2024*
+*Built with ❤️ for the DigiPay Pro NPCI Competition — Team 2026*
