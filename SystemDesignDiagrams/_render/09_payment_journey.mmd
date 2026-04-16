@@ -1,0 +1,41 @@
+sequenceDiagram
+    actor User
+    participant Shield as 🛡️ Pre-Payment Shield
+    participant React as ⚛️ React Frontend
+    participant Firebase as 🔥 Firestore
+    participant Flask as 🐍 Flask ML API
+    participant RF as 🤖 Random Forest
+
+    User->>React: Enter UPI + Amount
+    React->>Shield: Run 6-factor check
+    Shield->>Shield: Levenshtein spoof check
+    Shield->>Shield: Amount Z-score
+    Shield->>Shield: Time of day risk
+    Shield-->>React: Verdict (ALLOW / CAUTION / BLOCK)
+
+    alt Verdict is ALLOW or CAUTION
+        User->>React: Confirm payment
+        React->>Flask: POST /predict {features}
+        Flask->>RF: Score transaction
+        RF-->>Flask: fraud_probability
+        Flask-->>React: {verdict, score, explanation}
+
+        alt Score < 0.4 (SAFE)
+            React->>Firebase: Write transaction {fraudVerdict: SAFE}
+            Firebase-->>React: Transaction saved
+            React-->>User: ✅ Payment successful
+        else Score 0.4–0.7 (MEDIUM)
+            React-->>User: ⚠️ Warning shown, user confirms
+            React->>Firebase: Write transaction {fraudVerdict: MEDIUM_RISK}
+        else Score > 0.7 (HIGH RISK)
+            React-->>User: 🚨 Payment blocked
+            React->>Firebase: Write alert notification
+            Firebase-->>User: Push notification sent
+        end
+    else Verdict is BLOCK
+        React-->>User: 🚨 Blocked before sending
+    end
+
+    React->>Flask: POST /explain-transaction
+    Flask-->>React: SHAP factor breakdown
+    React-->>User: Show anomaly explanation

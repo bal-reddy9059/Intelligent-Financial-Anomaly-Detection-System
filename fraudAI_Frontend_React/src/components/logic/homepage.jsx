@@ -5795,7 +5795,7 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
                                 }`}>
                                   {verificationStatus === "valid" && <><Shield className="h-5 w-5 text-green-400 shrink-0" /><span className="font-medium">Recipient verified — safe to proceed</span></>}
                                   {verificationStatus === "fraud" && <><ShieldX className="h-5 w-5 text-red-400 shrink-0" /><span className="font-medium">AI flagged as high-risk — do not proceed</span></>}
-                                  {verificationStatus === "invalid" && <><XCircle className="h-5 w-5 text-orange-400 shrink-0" /><span className="font-medium">Invalid UPI ID format — must contain @</span></>}
+                                  {verificationStatus === "invalid" && <><XCircle className="h-5 w-5 text-orange-400 shrink-0" /><span className="font-medium">Invalid UPI ID — use format <em>name@bank</em> (e.g. rajan@ybl)</span></>}
                                 </div>
 
                                 {/* AI Risk Score Gauge */}

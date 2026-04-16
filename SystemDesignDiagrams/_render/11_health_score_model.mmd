@@ -1,0 +1,45 @@
+flowchart LR
+    TXS[(📂 User\nTransactions)]
+
+    subgraph DIM["📐 6 Scored Dimensions"]
+        D1["🎯 Budget Adherence\nWeight: 20%\nWeek-to-week variance"]
+        D2["🛡️ Fraud Exposure\nWeight: 25%\nSafe tx / total tx"]
+        D3["📈 Spending Consistency\nWeight: 15%\nStd-dev ratio"]
+        D4["👥 Recipient Diversity\nWeight: 15%\nUnique contacts / 10"]
+        D5["⚡ Payment Velocity\nWeight: 10%\nHour-of-day spread"]
+        D6["💰 Savings Rate\nWeight: 15%\nSpend vs capacity"]
+    end
+
+    subgraph CALC["🧮 Score Calculation"]
+        C1["raw = Σ(score × weight)"]
+        C2["composite = 300 + raw × 5.5"]
+        C3{Score Range}
+    end
+
+    subgraph GRADE["🏅 Letter Grade"]
+        G1["A+  ≥ 800\nExcellent"]
+        G2["A   ≥ 750\nVery Good"]
+        G3["B+  ≥ 700\nGood"]
+        G4["B   ≥ 650\nAbove Average"]
+        G5["C   ≥ 550\nFair"]
+        G6["D   < 550\nPoor"]
+    end
+
+    subgraph ACTION["💡 Improvement Actions"]
+        AC1[Find lowest\ndimension scores]
+        AC2[Rank by\nimpact weight]
+        AC3[Generate 3\npersonalized tips]
+    end
+
+    TXS --> D1 & D2 & D3 & D4 & D5 & D6
+    D1 & D2 & D3 & D4 & D5 & D6 --> C1
+    C1 --> C2 --> C3
+    C3 --> G1 & G2 & G3 & G4 & G5 & G6
+    C3 --> AC1 --> AC2 --> AC3
+
+    style DIM fill:#0f172a,stroke:#6366f1,color:#c7d2fe
+    style CALC fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style GRADE fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style ACTION fill:#1c1917,stroke:#f97316,color:#fed7aa
+    style G1 fill:#064e3b,stroke:#10b981,color:#a7f3d0
+    style G6 fill:#7f1d1d,stroke:#ef4444,color:#fecaca

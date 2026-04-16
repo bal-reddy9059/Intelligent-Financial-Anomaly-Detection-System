@@ -1,6 +1,17 @@
 # AegisAI — Sequence Diagrams
 
 > Paste any diagram into [mermaid.live](https://mermaid.live) to render interactively.
+> Pre-rendered PNGs are embedded below each section where available.
+
+---
+
+## Pre-Rendered Diagram Gallery
+
+### Payment Journey (Full Sequence)
+![Payment Journey Sequence](./_render/09_payment_journey.png)
+
+### Fraud Detection Pipeline
+![Fraud Detection Pipeline](./_render/08_fraud_detection_pipeline.png)
 
 ---
 
@@ -270,4 +281,167 @@ sequenceDiagram
     React-->>Viewer: Count incremented in real time
 
     Note over React: Community score for UPI = reports × weight + corroborations × weight
+```
+
+---
+
+## 7. Voice Pay Assistant Flow (Week 9)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant React as VoicePayAssistant.jsx
+    participant Speech as Web Speech API
+    participant NLP as parseVoiceCommand()
+    participant Flask as Flask /voice-parse
+    participant Nav as React Router
+
+    User->>React: Click microphone button
+    React->>Speech: new SpeechRecognition({ lang: en-IN, interimResults: true })
+    Speech->>Speech: Start listening
+    Speech-->>React: onresult → interim transcript
+    React-->>User: Show animated 28-bar waveform
+
+    User->>Speech: Speak "Send five hundred to Rahul for dinner"
+    Speech-->>React: Final transcript string
+
+    React->>NLP: parseVoiceCommand(transcript)
+    NLP->>NLP: Regex match: /send|pay|transfer/i
+    NLP->>NLP: Extract amount: /(\d+)\s*(hundred|thousand|k)?/i → 500
+    NLP->>NLP: Extract recipient: /to\s+([a-zA-Z@.]+)/i → rahul
+    NLP->>NLP: Extract remarks: /for\s+(.+)/i → dinner
+    NLP-->>React: { intent: SEND, amount: 500, recipient: rahul, remarks: dinner }
+
+    React->>Flask: POST /voice-parse { transcript }
+    Flask-->>React: { intent, entities, confidence }
+
+    React-->>User: Show parsed command preview card
+    User->>React: Confirm
+    React->>Nav: navigate('/send-money?amount=500&recipient=rahul&remarks=dinner')
+```
+
+---
+
+## 8. Pre-Payment Shield Flow (Week 17)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Shield as PrePaymentShield.jsx
+    participant Levenshtein as levenshtein()
+    participant Firestore as Firestore DB
+    participant Flask as Flask /prepayment-check
+
+    User->>Shield: Enter target UPI + amount → Click "Run Shield Check"
+
+    Shield->>Firestore: Load user transaction history (dual query)
+    Firestore-->>Shield: All transactions + known UPIs
+
+    Note over Shield: 6-factor analysis begins
+
+    Shield->>Levenshtein: Compare targetUPI vs all known contacts
+    Levenshtein-->>Shield: minDistance=1, closest="rahul@upi"
+
+    Shield->>Shield: Factor 1 — Recipient history check
+    Shield->>Shield: Factor 2 — Levenshtein spoof check
+    Shield->>Shield: Factor 3 — Amount Z-score vs personal avg
+    Shield->>Shield: Factor 4 — Hour risk (0–5 AM = high)
+    Shield->>Shield: Factor 5 — Velocity (txns in last 30 min)
+    Shield->>Shield: Factor 6 — Round number pattern
+
+    Shield->>Flask: POST /prepayment-check { targetUpi, amount, transactions, allKnownUpis }
+    Flask-->>Shield: { verdict, composite_risk, confidence, factors, spoof_detected }
+
+    Shield->>Shield: compositeRisk = avg(factor scores)
+
+    alt compositeRisk >= 65 or highCount >= 2
+        Shield-->>User: 🔴 BLOCK — Multiple high-risk signals
+    else compositeRisk >= 35 or highCount >= 1
+        Shield-->>User: 🟡 CAUTION — Verify before sending
+    else
+        Shield-->>User: 🟢 ALLOW — Safe to proceed
+    end
+
+    Shield-->>User: Show 6-factor breakdown bars + risk ring
+```
+
+---
+
+## 9. Fraud Ring Detector Flow (Week 15)
+
+```mermaid
+sequenceDiagram
+    participant React as FraudRingDetector.jsx
+    participant Firestore as Firestore DB
+    participant UF as UnionFind class
+    participant Layout as useForceLayout hook
+    participant SVG as SVG Canvas
+
+    React->>Firestore: Dual query (userId + senderUPI)
+    Firestore-->>React: All user transactions
+
+    React->>React: buildGraph(txs, selfUpiId)
+    React->>React: Create nodes map (UPI → { risk, txCount, totalAmount })
+    React->>React: Create edges list (src → dst with fraud flag)
+
+    React->>UF: new UnionFind()
+    loop For each transaction
+        React->>UF: union(senderUPI, receiverUPI)
+    end
+    UF-->>React: clusters() — grouped account arrays
+
+    React->>React: Identify fraud rings (cluster with risk>=75 + size>=2)
+    React->>React: Propagate risk across clusters
+
+    React->>Layout: useForceLayout(nodes, edges, width, height)
+    Layout->>Layout: Place nodes in circle (init)
+    loop 120 simulation ticks via requestAnimationFrame
+        Layout->>Layout: Repulsion force (F = 5000/d²)
+        Layout->>Layout: Spring attraction along edges
+        Layout->>Layout: Center gravity pull
+        Layout->>Layout: Update positions + clamp to bounds
+    end
+    Layout-->>React: positions { [nodeId]: { x, y } }
+
+    React->>SVG: Render edges (red dashed = fraud)
+    React->>SVG: Render nodes (color by risk level)
+    React-->>User: Interactive pan/zoom graph
+```
+
+---
+
+## 10. Financial Health Score Computation (Week 16)
+
+```mermaid
+sequenceDiagram
+    participant React as FinancialHealthScore.jsx
+    participant Firestore as Firestore DB
+    participant Engine as computeHealthScore()
+    participant Flask as Flask /financial-health
+
+    React->>Firestore: Dual query transactions (userId + senderUPI)
+    Firestore-->>React: All transactions (up to 500)
+
+    React->>Engine: computeHealthScore(txs)
+
+    Engine->>Engine: Segment txs into 4 weekly buckets
+    Engine->>Engine: Dim 1 — Budget Adherence: weekVariance / weekAvg
+    Engine->>Engine: Dim 2 — Fraud Exposure: (1 - fraudRate) × 100
+    Engine->>Engine: Dim 3 — Spending Consistency: 1 - (std/avg)/3
+    Engine->>Engine: Dim 4 — Recipient Diversity: uniqueRecipients / 10
+    Engine->>Engine: Dim 5 — Payment Velocity: hourSpread score
+    Engine->>Engine: Dim 6 — Savings Rate: 1 - totalSpent/100000
+
+    Engine->>Engine: raw = Σ(score × weight)
+    Engine->>Engine: composite = 300 + raw × 5.5
+    Engine->>Engine: grade = A+ if >=800, A if >=750 ... D if <550
+
+    Engine->>Engine: Sort dims by score → pick lowest 3 for actions
+    Engine-->>React: { composite, grade, dimensions, weeklyTrend, actions }
+
+    React->>Flask: POST /financial-health { transactions }
+    Flask-->>React: Server-side verification of score
+
+    React-->>User: Animate SVG arc gauge from 300 → composite
+    React-->>User: Render RadarChart + 4-week AreaChart + action cards
 ```

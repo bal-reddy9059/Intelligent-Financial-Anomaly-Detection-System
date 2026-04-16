@@ -1,0 +1,57 @@
+flowchart LR
+    TX([💸 Transaction\nInitiated])
+
+    subgraph PRECHECK["🛡️ Pre-Payment Shield"]
+        PC1{UPI Spoof\nCheck}
+        PC2{Amount\nZ-Score}
+        PC3{Time Risk\nOdd Hour?}
+        PC4{Velocity\nCheck}
+    end
+
+    subgraph MLSCORE["🤖 ML Scoring Engine"]
+        ML1[Extract 22\nFeatures]
+        ML2[Random Forest\nModel]
+        ML3[Fraud\nProbability 0–1]
+    end
+
+    subgraph EXPLAIN["🔬 SHAP Explainer"]
+        SH1[Factor 1\nAmount Z-Score]
+        SH2[Factor 2\nTime of Day]
+        SH3[Factor 3\nRecipient History]
+        SH4[Factor 4\nVelocity]
+        SH5[Factor 5\nRound Number]
+        SH6[Factor 6\nML Confidence]
+    end
+
+    subgraph VERDICT["⚖️ Final Verdict"]
+        V1{Risk\nScore}
+        V2[✅ SAFE\nAllow]
+        V3[⚠️ MEDIUM\nWarn User]
+        V4[🚨 HIGH RISK\nBlock + Alert]
+    end
+
+    TX --> PRECHECK
+    PC1 -->|Spoof detected| V4
+    PC1 -->|Clean| PC2
+    PC2 -->|Abnormal| PC3
+    PC2 -->|Normal| ML1
+    PC3 -->|Late night| PC4
+    PC3 -->|Safe hour| ML1
+    PC4 --> ML1
+
+    ML1 --> ML2 --> ML3
+    ML3 --> EXPLAIN
+    SH1 & SH2 & SH3 & SH4 & SH5 & SH6 --> V1
+
+    V1 -->|score < 35| V2
+    V1 -->|35–65| V3
+    V1 -->|score > 65| V4
+
+    style TX fill:#1e3a5f,stroke:#3b82f6,color:#bfdbfe
+    style PRECHECK fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style MLSCORE fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style EXPLAIN fill:#1c1917,stroke:#f97316,color:#fed7aa
+    style VERDICT fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+    style V2 fill:#064e3b,stroke:#10b981,color:#a7f3d0
+    style V3 fill:#78350f,stroke:#f59e0b,color:#fde68a
+    style V4 fill:#7f1d1d,stroke:#ef4444,color:#fecaca

@@ -1260,7 +1260,7 @@ def ai_summary():
 # ─── Explain Transaction ──────────────────────────────────────────────────────
 
 @app.route('/explain/<int:idx>', methods=['GET'])
-def explain_transaction(idx):
+def explain_transaction_by_idx(idx):
     """Explain a specific transaction from the loaded dataset."""
     try:
         df = state["df"]
@@ -5013,6 +5013,878 @@ def dark_pattern_check():
             return jsonify({"detected": True, "label": label, "detail": detail, "riskBoost": 30})
 
     return jsonify({"detected": False, "label": None, "detail": None, "riskBoost": 0})
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Week 9 — Voice Pay Assistant: parse voice command intent
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route('/voice-parse', methods=['POST'])
+def voice_parse():
+    """Advanced NLP voice command parser with conversational AI responses."""
+    import re
+
+    data     = request.get_json(silent=True) or {}
+    raw_text = data.get('text', '').strip()
+    context  = data.get('context', {})
+    if not raw_text:
+        return jsonify({"error": "No text provided"}), 400
+
+    # ── Step 1: Normalise UPI @ spoken forms ─────────────────────────────────
+    t = raw_text.lower()
+    for pat in [r'at\s+the\s+rate\s+of', r'alter\s+rate\s+of', r'at\s+rate\s+of',
+                r'at\s+the\s+rate', r'at\s+rate', r'aat']:
+        t = re.sub(pat, '@', t)
+
+    # ── Step 2: Word → number ────────────────────────────────────────────────
+    WN = {'zero':0,'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,
+          'eight':8,'nine':9,'ten':10,'eleven':11,'twelve':12,'thirteen':13,
+          'fourteen':14,'fifteen':15,'sixteen':16,'seventeen':17,'eighteen':18,
+          'nineteen':19,'twenty':20,'thirty':30,'forty':40,'fifty':50,'sixty':60,
+          'seventy':70,'eighty':80,'ninety':90,'hundred':100,'thousand':1000,
+          'lakh':100000,'lac':100000,'crore':10000000}
+    def w2n(m):
+        total, cur = 0, 0
+        for w in m.group(0).split():
+            n = WN.get(w, 0)
+            if   n == 100:       cur = (cur or 1) * 100
+            elif n >= 1000:      total += (cur or 1) * n; cur = 0
+            else:                cur += n
+        return str(total + cur)
+    wp = '|'.join(WN.keys())
+    t  = re.sub(rf'\b(?:{wp})(?:\s+(?:{wp}))*\b', w2n, t)
+    t  = re.sub(r'(\d+)\s*k\b',       lambda m: str(int(m.group(1)) * 1000), t)
+    t  = re.sub(r'(\d+)\s*hundred\b', lambda m: str(int(m.group(1)) * 100),  t)
+
+    # ── Step 3: Reconstruct split UPI IDs ────────────────────────────────────
+    t = re.sub(r'([a-z]+)\s+(\d+)\s*@\s*([a-z]+)', r'\1\2@\3', t)
+    t = re.sub(r'([a-z\d]+)\s*@\s*([a-z]+)',        r'\1@\2',   t)
+
+    # ── Step 4: Intent — detect FIRST so extraction can use it ───────────────
+    intent = 'unknown'
+    if   re.search(r'\b(send|pay|transfer|give)\b', t):                      intent = 'send_money'
+    elif re.search(r'\b(check|verify|trust|safe|is\s+\w+\s+safe)\b', t):    intent = 'check_upi'
+    elif re.search(r'\b(balance|wallet|how\s+much)\b', t):                   intent = 'check_balance'
+    elif re.search(r'\b(history|transactions|recent|statement)\b', t):       intent = 'view_history'
+    elif re.search(r'\b(fraud|scam|block|fake|danger)\b', t):                intent = 'fraud_check'
+
+    # ── Step 5: Amount ───────────────────────────────────────────────────────
+    NON_AMOUNT = {'pay','send','transfer','give','money','me','you','him','her',
+                  'them','the','a','an','to','for','of','is','my','your','can',
+                  'want','i','will','please','just','need','help','say','some'}
+    amount = None
+    for pat in [
+        # "send [a] money [for] 500", "pay [a] 500"
+        r'(?:send|pay|transfer|give)\s+(?:a\s+)?(?:money\s+)?(?:₹|rs\.?|inr|rupees?)?\s*(\d[\d,]*(?:\.\d+)?)',
+        r'(?:₹|rs\.?|inr|rupees?)\s*(\d[\d,]*(?:\.\d+)?)',
+        r'(\d[\d,]*(?:\.\d+)?)\s*(?:rupees?|rs\.?|inr|₹)',
+        # number right after a name in "for [name] 500"
+        r'\bfor\s+(?:a\s+|an\s+|the\s+)?[a-z]+\s+(\d[\d,]*(?:\.\d+)?)\b',
+        r'\b(\d{2,7})\b',               # any bare number fallback
+    ]:
+        m = re.search(pat, t)
+        if m:
+            amount = m.group(1).replace(',', '')
+            break
+    if not amount:
+        amount = context.get('amount')
+
+    # ── Step 6: Recipient ────────────────────────────────────────────────────
+    REASON_WORDS = {'coffee','food','rent','groceries','bills','utilities','lunch',
+                    'dinner','travel','fuel','medicine','shopping','entertainment',
+                    'fees','salary','gift','party'}
+
+    recipient = None
+
+    # 6a. Explicit "to <word>" — skip verbs / stop words
+    for m in re.finditer(r'\bto\s+([\w@.]+(?:@[\w.]+)?)', t):
+        w = m.group(1).lower().rstrip('.,')
+        if w not in NON_AMOUNT:
+            recipient = m.group(1).rstrip('.,')
+            break
+
+    # 6b. Any UPI-format token (contains @) anywhere in sentence
+    if not recipient:
+        m = re.search(r'\b([\w.]+@[\w.]+)\b', t)
+        if m:
+            recipient = m.group(1)
+
+    # 6c. "for [article] <name>" — single alpha word, not a stop/reason word
+    if not recipient:
+        m = re.search(r'\bfor\s+(?:a\s+|an\s+|the\s+)?([a-z][a-z]*)\b', t)
+        if m:
+            w = m.group(1)
+            if w not in NON_AMOUNT and w not in REASON_WORDS:
+                recipient = w
+
+    # 6d. "check if <name>", "is <name> safe/fraud" — name after "if" / "is"
+    if not recipient and intent in ('check_upi', 'fraud_check'):
+        m = re.search(r'\b(?:if|is)\s+([\w@.]+(?:@[\w.]+)?)\b', t)
+        if m and m.group(1) not in NON_AMOUNT:
+            recipient = m.group(1)
+
+    if not recipient:
+        recipient = context.get('recipient')
+
+    # ── Step 7: Reason ───────────────────────────────────────────────────────
+    reason = None
+    m = re.search(r'\bfor\s+(?:a\s+|an\s+|the\s+)?(.+?)(?:\s*$|\s+to\s+)', t)
+    if m:
+        for_text = m.group(1).strip()
+        # Remove the recipient name from the front if it was captured there
+        if recipient and for_text.lower().startswith(recipient.lower()):
+            leftover = for_text[len(recipient):].strip()
+            # leftover is either empty, a number (already used as amount), or a reason
+            if leftover and not re.fullmatch(r'\d+', leftover):
+                reason = leftover
+        elif for_text in REASON_WORDS or ' ' in for_text:
+            reason = for_text
+        # single unknown word that isn't a reason word → already used as recipient, skip
+
+    if not reason:
+        reason = context.get('reason')
+
+    # ── Step 8: Confidence & missing slots ───────────────────────────────────
+    missing = []
+    if intent == 'send_money':
+        if not amount:    missing.append('amount')
+        if not recipient: missing.append('recipient')
+    elif intent == 'check_upi' and not recipient:
+        missing.append('recipient')
+
+    total_slots = 2 if intent == 'send_money' else 1 if intent == 'check_upi' else 1
+    filled      = total_slots - len(missing)
+    confidence  = round(0.50 + 0.45 * (filled / total_slots), 2) if intent != 'unknown' else 0.20
+
+    # ── Step 9: Conversational reply ─────────────────────────────────────────
+    amt_fmt = f"₹{int(float(amount)):,}" if amount else "some amount"
+    if intent == 'send_money' and not missing:
+        reply = (f"Got it! Sending {amt_fmt} to {recipient}"
+                 + (f" for {reason}" if reason else "") + ". Tap confirm to proceed.")
+    elif intent == 'send_money' and set(missing) == {'amount', 'recipient'}:
+        reply = "Sure! Who should I send to, and how much?"
+    elif intent == 'send_money' and 'amount' in missing:
+        reply = f"How much would you like to send to {recipient}?"
+    elif intent == 'send_money' and 'recipient' in missing:
+        reply = f"Who should I send {amt_fmt} to? Please say their UPI ID or name."
+    elif intent == 'check_upi':
+        reply = f"Checking safety of {recipient}…" if recipient else "Which UPI ID should I check?"
+    elif intent == 'check_balance':
+        reply = "Opening your wallet balance now."
+    elif intent == 'view_history':
+        reply = "Showing your recent transactions."
+    elif intent == 'fraud_check':
+        reply = f"Running fraud check on {recipient}." if recipient else "Which UPI should I check?"
+    else:
+        reply = ('I didn\'t catch that. Try: "Send ₹500 to rajan4821@ybl for coffee" '
+                 'or "Check if alice@paytm is safe".')
+
+    return jsonify({
+        "intent":     intent,
+        "amount":     amount,
+        "recipient":  recipient,
+        "reason":     reason,
+        "confidence": confidence,
+        "missing":    missing,
+        "reply":      reply,
+        "raw":        raw_text,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Week 10 — Spending DNA: compute 8-dimension spending fingerprint
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route('/spending-dna', methods=['POST'])
+def spending_dna():
+    """Compute spending DNA from a list of transactions and detect anomalies."""
+    data = request.get_json(silent=True) or {}
+    transactions = data.get('transactions', [])
+    if not transactions:
+        return jsonify({"error": "No transactions provided"}), 400
+
+    DNA_DIMS = [
+        {"key": "Food",          "keywords": ["food","swiggy","zomato","restaurant","eat","meal","lunch","dinner","breakfast","cafe","snack","grocery"]},
+        {"key": "Transport",     "keywords": ["uber","ola","cab","auto","bus","metro","train","fuel","petrol","diesel","rapido","transport"]},
+        {"key": "Entertainment", "keywords": ["netflix","prime","hotstar","ott","game","gaming","cinema","movie","theatre","concert","entertainment"]},
+        {"key": "Shopping",      "keywords": ["amazon","flipkart","shop","shopping","clothes","myntra","meesho","purchase","buy","order"]},
+        {"key": "Housing",       "keywords": ["rent","house","housing","mortgage","pg","hostel","maintenance","society"]},
+        {"key": "Utilities",     "keywords": ["electricity","water","gas","internet","wifi","broadband","bill","recharge","dth"]},
+        {"key": "Health",        "keywords": ["medical","medicine","doctor","hospital","pharmacy","health","clinic","dental"]},
+        {"key": "Other",         "keywords": []},
+    ]
+
+    def categorize(remarks):
+        r = (remarks or '').lower()
+        for dim in DNA_DIMS[:-1]:
+            if any(kw in r for kw in dim['keywords']):
+                return dim['key']
+        return 'Other'
+
+    def build_profile(txs):
+        total = sum(float(t.get('amount', 0) or 0) for t in txs)
+        if total == 0:
+            return {d['key']: 0 for d in DNA_DIMS}
+        counts = {d['key']: 0.0 for d in DNA_DIMS}
+        for t in txs:
+            cat = categorize(t.get('remarks') or t.get('description') or '')
+            counts[cat] += float(t.get('amount', 0) or 0)
+        return {k: round((v / total) * 100) for k, v in counts.items()}
+
+    # Split: baseline = older half, current = recent half
+    mid = len(transactions) // 2
+    baseline_txs = transactions[mid:]
+    current_txs  = transactions[:mid] if mid > 0 else transactions
+
+    baseline = build_profile(baseline_txs)
+    current  = build_profile(current_txs)
+
+    # Anomaly score = mean absolute deviation across dimensions
+    diffs = [abs(current.get(k, 0) - baseline.get(k, 0)) for k in baseline]
+    anomaly_score = min(100, round(sum(diffs) / max(len(diffs), 1) * 2))
+
+    anomalies = []
+    for k in baseline:
+        diff = current.get(k, 0) - baseline.get(k, 0)
+        if abs(diff) >= 15:
+            anomalies.append({
+                "dimension": k,
+                "diff": diff,
+                "severity": "high" if abs(diff) >= 30 else "medium",
+                "message": f"{'↑' if diff > 0 else '↓'} {abs(diff)}% {'increase' if diff > 0 else 'decrease'} vs baseline"
+            })
+
+    return jsonify({
+        "baseline":      baseline,
+        "current":       current,
+        "anomaly_score": anomaly_score,
+        "anomalies":     sorted(anomalies, key=lambda x: abs(x['diff']), reverse=True),
+        "tx_count":      {"baseline": len(baseline_txs), "current": len(current_txs)},
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Week 11 — Future Risk Predictor: 7-day fraud forecast for a UPI
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route('/future-risk/<upi_id>', methods=['GET', 'POST'])
+def future_risk(upi_id):
+    """Predict 7-day fraud risk forecast for a given UPI ID."""
+    from datetime import datetime, timedelta
+    data = request.get_json(silent=True) or {}
+
+    # Accept signal inputs or use defaults
+    velocity_score   = int(data.get('velocity_score',   20))   # 0–40
+    amount_score     = int(data.get('amount_score',     5))    # 0–20
+    fraud_score      = int(data.get('fraud_score',      0))    # 0–30
+    community_score  = int(data.get('community_score',  0))    # 0–10
+    tx_count         = int(data.get('tx_count',         0))
+    fraud_count      = int(data.get('fraud_count',      0))
+    avg_amount       = float(data.get('avg_amount',     0))
+    community_reports = int(data.get('community_reports', 0))
+
+    base_risk = min(100, velocity_score + amount_score + fraud_score + community_score)
+
+    # Day-of-week multipliers (Sun=0 highest, Mon=1 lowest)
+    DOW_RISK = {0: 1.4, 1: 0.7, 2: 0.8, 3: 0.9, 4: 1.0, 5: 1.3, 6: 1.5}
+    DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    forecast = []
+    today = datetime.now()
+    for i in range(7):
+        date = today + timedelta(days=i)
+        dow  = date.weekday()  # Mon=0 in Python, Sun=6
+        # Convert to Sun=0 format
+        dow_sun0 = (dow + 1) % 7
+        day_risk = min(100, round(base_risk * DOW_RISK[dow_sun0]))
+        forecast.append({
+            "day":   "Today" if i == 0 else "Tomorrow" if i == 1 else DAY_NAMES[dow_sun0],
+            "date":  date.strftime("%b %d"),
+            "risk":  day_risk,
+            "dow":   dow_sun0,
+        })
+
+    peak_day = max(forecast, key=lambda d: d['risk'])
+    safe_day = min(forecast, key=lambda d: d['risk'])
+
+    risk_level = "HIGH" if base_risk >= 70 else "MEDIUM" if base_risk >= 40 else "LOW"
+    recommendation = (
+        f"Avoid transacting with {upi_id}. Peak risk on {peak_day['day']} ({peak_day['risk']}%). "
+        f"Even the safest window ({safe_day['day']}, {safe_day['risk']}%) carries high risk."
+        if risk_level == "HIGH" else
+        f"Proceed with caution. Safest window: {safe_day['day']} ({safe_day['risk']}%). "
+        f"Avoid {peak_day['day']} ({peak_day['risk']}% peak risk)."
+        if risk_level == "MEDIUM" else
+        f"Generally safe. Lowest risk: {safe_day['day']} ({safe_day['risk']}%). "
+        f"Always verify the UPI before large transfers."
+    )
+
+    return jsonify({
+        "upi_id":         upi_id,
+        "base_risk":      base_risk,
+        "risk_level":     risk_level,
+        "forecast":       forecast,
+        "peak_day":       peak_day,
+        "safe_day":       safe_day,
+        "factors": {
+            "velocity_score":  velocity_score,
+            "amount_score":    amount_score,
+            "fraud_score":     fraud_score,
+            "community_score": community_score,
+        },
+        "stats": {
+            "tx_count":          tx_count,
+            "fraud_count":       fraud_count,
+            "avg_amount":        avg_amount,
+            "community_reports": community_reports,
+        },
+        "recommendation": recommendation,
+    })
+
+
+# ── Week 12: AI Financial Chronicle ───────────────────────────────────────────
+@app.route('/financial-story', methods=['POST'])
+def financial_story():
+    """Generate a narrative financial story from transaction data."""
+    data = request.get_json(silent=True) or {}
+    transactions = data.get('transactions', [])
+    user_name    = data.get('userName', 'User')
+    month_name   = data.get('monthName', 'This Month')
+
+    if not transactions:
+        return jsonify({"error": "No transactions provided"}), 400
+
+    amounts = [float(t.get('amount', 0)) for t in transactions if t.get('amount')]
+    total_spent   = sum(amounts)
+    tx_count      = len(transactions)
+    avg_amount    = total_spent / tx_count if tx_count else 0
+    max_tx        = max(transactions, key=lambda t: float(t.get('amount', 0)), default={})
+    fraud_count   = sum(1 for t in transactions if t.get('fraudVerdict') in ('HIGH_RISK', 'MEDIUM_RISK'))
+
+    cat_map = {}
+    for t in transactions:
+        cat = t.get('category', 'Other')
+        cat_map[cat] = cat_map.get(cat, 0) + float(t.get('amount', 0))
+    top_cat = max(cat_map, key=cat_map.get) if cat_map else 'General'
+
+    fraud_rate = (fraud_count / tx_count * 100) if tx_count else 0
+    security_status = "excellent" if fraud_rate < 2 else "good" if fraud_rate < 10 else "concerning"
+
+    story = {
+        "title": f"{user_name}'s Financial Chronicle — {month_name}",
+        "sections": [
+            {
+                "title": "Opening Chapter",
+                "content": (
+                    f"In {month_name}, {user_name.split()[0]} navigated {tx_count} financial transactions "
+                    f"totalling ₹{total_spent:,.0f}. Every rupee tells a story — this is yours."
+                ),
+            },
+            {
+                "title": "The Spending Story",
+                "content": (
+                    f"Your largest spending category was {top_cat}, absorbing "
+                    f"₹{cat_map.get(top_cat, 0):,.0f} of your total outflow. "
+                    f"On average, each transaction was ₹{avg_amount:,.0f}, "
+                    f"reflecting a {'disciplined' if avg_amount < 2000 else 'moderate' if avg_amount < 10000 else 'high-value'} spending profile."
+                ),
+            },
+            {
+                "title": "Standout Transaction",
+                "content": (
+                    f"Your biggest single transaction was ₹{float(max_tx.get('amount', 0)):,.0f} "
+                    f"to {max_tx.get('receiver', max_tx.get('receiverUPI', 'an unknown recipient'))}. "
+                    f"{'This transaction was flagged by our AI as high risk — review it carefully.' if max_tx.get('fraudVerdict') in ('HIGH_RISK','MEDIUM_RISK') else 'This transaction was verified as safe by our fraud detection engine.'}"
+                ),
+            },
+            {
+                "title": "Security Report",
+                "content": (
+                    f"Your account security posture this month is {security_status}. "
+                    f"Of your {tx_count} transactions, {fraud_count} were flagged ({fraud_rate:.1f}%). "
+                    f"{'No action needed — your account is clean.' if fraud_count == 0 else 'Please review flagged transactions in the Dispute Center.'}"
+                ),
+            },
+            {
+                "title": "Closing Insights",
+                "content": (
+                    f"Overall, {month_name} was a {'productive' if tx_count > 20 else 'quiet'} financial month. "
+                    f"Your AI guardian processed every payment in real time, keeping your money safe. "
+                    f"Keep monitoring your Spending DNA and Budget Predictor for a stronger next month."
+                ),
+            },
+        ],
+        "stats": {
+            "total_spent": total_spent,
+            "tx_count": tx_count,
+            "avg_amount": avg_amount,
+            "top_category": top_cat,
+            "fraud_count": fraud_count,
+            "fraud_rate": round(fraud_rate, 1),
+        },
+    }
+    return jsonify(story)
+
+
+# ── Week 13: Smart Budget Predictor ───────────────────────────────────────────
+@app.route('/budget-predict', methods=['POST'])
+def budget_predict():
+    """Predict budget exhaustion and month-end spend from transaction data."""
+    from datetime import datetime, timedelta
+    data = request.get_json(silent=True) or {}
+    transactions  = data.get('transactions', [])
+    manual_budget = float(data.get('budget', 0))
+
+    today   = datetime.now()
+    days_in_month = (datetime(today.year, today.month % 12 + 1, 1) - timedelta(days=1)).day if today.month < 12 else 31
+    day_of_month  = today.day
+    days_elapsed  = max(day_of_month, 1)
+    days_left     = days_in_month - day_of_month
+
+    # Filter to this month
+    this_month_key = f"{today.year}-{today.month:02d}"
+    this_month_txs = []
+    for t in transactions:
+        try:
+            ts_str = t.get('timestamp') or t.get('date', '')
+            ts = datetime.fromisoformat(str(ts_str)[:10]) if ts_str else today
+            if f"{ts.year}-{ts.month:02d}" == this_month_key:
+                this_month_txs.append(t)
+        except Exception:
+            pass
+
+    spent_so_far  = sum(float(t.get('amount', 0)) for t in this_month_txs)
+    daily_velocity = spent_so_far / days_elapsed
+    projected_total = spent_so_far + daily_velocity * days_left
+    auto_budget   = manual_budget if manual_budget > 0 else max(projected_total * 1.1, 10000)
+    remaining     = auto_budget - spent_so_far
+    safe_daily    = remaining / max(days_left, 1)
+
+    # Exhaustion date
+    exhaustion_date = None
+    if daily_velocity > safe_daily and remaining > 0:
+        days_to_exhaust = remaining / max(daily_velocity, 0.01)
+        exhaustion_date = (today + timedelta(days=int(days_to_exhaust))).strftime('%Y-%m-%d')
+
+    burn_rate  = projected_total / max(auto_budget, 1)
+    risk_level = "CRITICAL" if burn_rate >= 1.2 else "HIGH" if burn_rate >= 1.0 else "MEDIUM" if burn_rate >= 0.85 else "SAFE"
+
+    recommendation = (
+        f"Critical overspend. Reduce daily spend by ₹{max(0, daily_velocity - safe_daily):,.0f} immediately."
+        if risk_level == "CRITICAL" else
+        f"Budget will be exceeded. Cut daily spend to ₹{safe_daily:,.0f} to stay within ₹{auto_budget:,.0f}."
+        if risk_level == "HIGH" else
+        f"Slightly above safe pace. Try to limit daily spending to ₹{safe_daily:,.0f}."
+        if risk_level == "MEDIUM" else
+        f"On track! Keep daily spending under ₹{safe_daily:,.0f} to finish ₹{max(0, auto_budget - projected_total):,.0f} under budget."
+    )
+
+    return jsonify({
+        "spent_so_far":    round(spent_so_far, 2),
+        "projected_total": round(projected_total, 2),
+        "auto_budget":     round(auto_budget, 2),
+        "remaining":       round(remaining, 2),
+        "safe_daily":      round(safe_daily, 2),
+        "daily_velocity":  round(daily_velocity, 2),
+        "burn_rate":       round(burn_rate, 3),
+        "risk_level":      risk_level,
+        "days_left":       days_left,
+        "exhaustion_date": exhaustion_date,
+        "tx_count":        len(this_month_txs),
+        "recommendation":  recommendation,
+    })
+
+
+# ── Week 14: Transaction Anomaly Explainer ────────────────────────────────────
+@app.route('/explain-transaction', methods=['POST'])
+def explain_transaction():
+    """Generate SHAP-style anomaly explanation for a single transaction."""
+    data = request.get_json(silent=True) or {}
+    tx            = data.get('transaction', {})
+    all_txs       = data.get('allTransactions', [])
+
+    amount = float(tx.get('amount', 0))
+    amounts = [float(t.get('amount', 0)) for t in all_txs if t.get('amount')]
+    avg_amount = sum(amounts) / len(amounts) if amounts else 1
+    std_amount = (sum((a - avg_amount) ** 2 for a in amounts) / len(amounts)) ** 0.5 if len(amounts) > 1 else 1
+
+    z_score = (amount - avg_amount) / max(std_amount, 1)
+
+    # Hour risk
+    try:
+        from datetime import datetime
+        ts_str = tx.get('timestamp') or tx.get('date', '')
+        ts = datetime.fromisoformat(str(ts_str)[:19].replace('T', ' ')) if ts_str else datetime.now()
+        hour = ts.hour
+        dow  = ts.weekday()
+    except Exception:
+        hour, dow = 12, 1
+
+    odd_hour     = hour >= 0 and hour <= 5
+    is_weekend   = dow >= 5
+    is_round     = amount % 100 == 0 or amount % 500 == 0
+    fraud_verdict = tx.get('fraudVerdict', tx.get('fraud_verdict', 'UNKNOWN'))
+    fraud_score   = float(tx.get('fraudScore', tx.get('fraud_score', 0.5)))
+
+    # Recipient familiarity
+    receiver = tx.get('receiverUPI') or tx.get('receiver', '')
+    prior_txs = [t for t in all_txs if (t.get('receiverUPI') or t.get('receiver', '')) == receiver]
+    is_new_recipient = len(prior_txs) <= 1
+
+    # Rapid succession
+    try:
+        near_txs = []
+        for t in all_txs:
+            t_ts_str = t.get('timestamp') or t.get('date', '')
+            t_ts = datetime.fromisoformat(str(t_ts_str)[:19].replace('T', ' ')) if t_ts_str else ts
+            diff = abs((t_ts - ts).total_seconds())
+            if diff < 3600 and t.get('id') != tx.get('id'):
+                near_txs.append(t)
+        rapid_succession = len(near_txs) > 0
+    except Exception:
+        rapid_succession = False
+
+    factors = [
+        {
+            "name": "Transaction Amount",
+            "score": round(min(abs(z_score) * 0.3, 1), 3),
+            "direction": "risk" if z_score > 1.5 else "safe",
+            "explanation": (
+                f"₹{amount:,.0f} is {z_score:.1f}× above your average (₹{avg_amount:,.0f}). High deviation detected."
+                if z_score > 1.5 else
+                f"Amount is within normal range (avg ₹{avg_amount:,.0f})."
+            ),
+        },
+        {
+            "name": "Time of Transaction",
+            "score": 0.9 if odd_hour else 0.4 if is_weekend else 0.05,
+            "direction": "risk" if odd_hour else "safe",
+            "explanation": (
+                f"Initiated at {ts.strftime('%H:%M')} — late-night transactions carry elevated risk."
+                if odd_hour else
+                f"Transaction at {ts.strftime('%H:%M')} during {'weekend' if is_weekend else 'normal'} hours."
+            ),
+        },
+        {
+            "name": "Recipient Profile",
+            "score": 0.75 if is_new_recipient else 0.05,
+            "direction": "risk" if is_new_recipient else "safe",
+            "explanation": (
+                f"First-time recipient ({receiver or 'unknown'}). New recipients carry higher risk."
+                if is_new_recipient else
+                f"Trusted recipient — {len(prior_txs)} prior transactions."
+            ),
+        },
+        {
+            "name": "Velocity (Rapid Succession)",
+            "score": 0.8 if rapid_succession else 0.05,
+            "direction": "risk" if rapid_succession else "safe",
+            "explanation": (
+                f"Multiple transactions within 60 minutes detected — rapid succession fraud signal."
+                if rapid_succession else
+                "No rapid succession detected."
+            ),
+        },
+        {
+            "name": "Round Number Pattern",
+            "score": 0.35 if is_round else 0.02,
+            "direction": "risk" if is_round else "safe",
+            "explanation": (
+                f"₹{amount:,.0f} is a round number — characteristic of scripted fraud."
+                if is_round else
+                "Specific amount — not typical of automated fraud."
+            ),
+        },
+        {
+            "name": "ML Model Confidence",
+            "score": fraud_score,
+            "direction": "risk" if fraud_score > 0.6 else "safe",
+            "explanation": (
+                f"ML model flagged this as {fraud_verdict} with {fraud_score * 100:.0f}% fraud probability."
+                if fraud_verdict in ('HIGH_RISK', 'MEDIUM_RISK') else
+                f"ML model classified this as SAFE ({fraud_score * 100:.0f}% fraud probability)."
+            ),
+        },
+    ]
+
+    risk_scores = [f['score'] for f in factors if f['direction'] == 'risk']
+    composite_risk = min(round(sum(risk_scores) / len(factors) * 200), 100)
+    verdict = (
+        'HIGH_RISK'   if fraud_verdict == 'HIGH_RISK' or composite_risk >= 65 else
+        'MEDIUM_RISK' if fraud_verdict == 'MEDIUM_RISK' or composite_risk >= 35 else
+        'SAFE'
+    )
+
+    return jsonify({
+        "transaction_id":  tx.get('id', 'unknown'),
+        "amount":          amount,
+        "verdict":         verdict,
+        "composite_risk":  composite_risk,
+        "fraud_score":     fraud_score,
+        "factors":         factors,
+        "summary": (
+            f"HIGH RISK: Multiple anomaly signals detected. Immediate review recommended."
+            if verdict == 'HIGH_RISK' else
+            f"MEDIUM RISK: Some suspicious patterns. Monitor this transaction."
+            if verdict == 'MEDIUM_RISK' else
+            f"SAFE: Transaction appears legitimate. No action required."
+        ),
+    })
+
+
+# ── Week 15: Fraud Ring Detector ──────────────────────────────────────────────
+@app.route('/fraud-ring-analysis', methods=['POST'])
+def fraud_ring_analysis():
+    """Analyse transaction network for fraud clusters using Union-Find."""
+    data = request.get_json(silent=True) or {}
+    transactions = data.get('transactions', [])
+    self_upi     = data.get('selfUpi', '')
+
+    if not transactions:
+        return jsonify({"nodes": [], "edges": [], "fraud_rings": [], "stats": {}})
+
+    # Build adjacency
+    parent = {}
+    def find(x):
+        if x not in parent: parent[x] = x
+        if parent[x] != x: parent[x] = find(parent[x])
+        return parent[x]
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py: parent[px] = py
+
+    nodes = {}
+    edges = []
+
+    for tx in transactions:
+        src = tx.get('senderUPI') or tx.get('sender') or 'unknown_sender'
+        dst = tx.get('receiverUPI') or tx.get('receiver') or 'unknown_receiver'
+        verdict = tx.get('fraudVerdict', tx.get('fraud_verdict', 'SAFE'))
+        amount  = float(tx.get('amount', 0))
+        is_fraud = verdict in ('HIGH_RISK', 'MEDIUM_RISK')
+
+        for nid, name in [(src, tx.get('senderName', src)), (dst, tx.get('receiverName', dst))]:
+            if nid not in nodes:
+                nodes[nid] = {'id': nid, 'label': name, 'risk': 10, 'txCount': 0, 'totalAmount': 0.0, 'isSelf': nid == self_upi}
+            nodes[nid]['txCount'] += 1
+            nodes[nid]['totalAmount'] += amount
+            if is_fraud:
+                nodes[nid]['risk'] = max(nodes[nid]['risk'], 75 if dst == nid else 60)
+
+        edges.append({'source': src, 'target': dst, 'amount': amount, 'isFraud': is_fraud, 'verdict': verdict})
+        union(src, dst)
+
+    # Build clusters
+    clusters_map = {}
+    for nid in nodes:
+        root = find(nid)
+        clusters_map.setdefault(root, []).append(nid)
+
+    # Fraud rings: clusters with >= 2 nodes where any has risk >= 75
+    fraud_rings = []
+    for cluster in clusters_map.values():
+        if len(cluster) >= 2 and any(nodes[nid]['risk'] >= 75 for nid in cluster):
+            fraud_rings.append(cluster)
+
+    return jsonify({
+        "nodes":       list(nodes.values()),
+        "edges":       edges,
+        "fraud_rings": fraud_rings,
+        "stats": {
+            "total_nodes":    len(nodes),
+            "total_edges":    len(edges),
+            "fraud_rings":    len(fraud_rings),
+            "high_risk_nodes": sum(1 for n in nodes.values() if n['risk'] >= 75),
+        },
+    })
+
+
+# ── Week 16: Financial Health Score ──────────────────────────────────────────
+@app.route('/financial-health', methods=['POST'])
+def financial_health():
+    """Compute 0-850 composite financial health score across 6 dimensions."""
+    from datetime import datetime, timedelta
+    import math
+
+    data         = request.get_json(silent=True) or {}
+    transactions = data.get('transactions', [])
+
+    if not transactions:
+        return jsonify({"composite": 500, "grade": "C", "dimensions": [], "actions": []})
+
+    now = datetime.now()
+
+    amounts = [float(t.get('amount', 0)) for t in transactions if t.get('amount')]
+    total_spent = sum(amounts)
+    avg_amount  = total_spent / len(amounts) if amounts else 0
+    std_amount  = math.sqrt(sum((a - avg_amount)**2 for a in amounts) / len(amounts)) if len(amounts) > 1 else 1
+
+    fraud_count = sum(1 for t in transactions if t.get('fraudVerdict') in ('HIGH_RISK', 'MEDIUM_RISK'))
+    fraud_rate  = fraud_count / len(transactions) if transactions else 0
+
+    recipients  = set(t.get('receiverUPI') or t.get('receiver', '') for t in transactions if t.get('receiverUPI') or t.get('receiver'))
+    rec_diversity = min(len(recipients) / 10, 1.0)
+
+    hours = set()
+    for t in transactions:
+        try:
+            ts_str = t.get('timestamp') or t.get('date', '')
+            ts = datetime.fromisoformat(str(ts_str)[:19].replace('T', ' ')) if ts_str else now
+            hours.add(ts.hour)
+        except Exception:
+            pass
+    time_consistency = 0.9 if len(hours) < 4 else 0.7 if len(hours) < 8 else 0.5
+
+    spend_consistency = max(0.0, 1.0 - min((std_amount / max(avg_amount, 1)) / 3, 1.0))
+    savings_proxy = max(0.0, 1.0 - min(total_spent / 100000, 1.0))
+
+    # Budget adherence via weekly variance
+    week_totals = [0.0] * 4
+    for t in transactions:
+        try:
+            ts_str = t.get('timestamp') or t.get('date', '')
+            ts = datetime.fromisoformat(str(ts_str)[:19].replace('T', ' ')) if ts_str else now
+            days_ago = (now - ts).days
+            if days_ago < 28:
+                week_totals[days_ago // 7] += float(t.get('amount', 0))
+        except Exception:
+            pass
+    week_avg  = sum(week_totals) / 4
+    week_var  = sum(abs(w - week_avg) for w in week_totals) / 4
+    budget_adherence = max(0.0, 1.0 - week_var / max(week_avg, 1))
+
+    dimensions = [
+        {"name": "Budget Adherence",    "score": round(budget_adherence * 100),   "weight": 0.20},
+        {"name": "Fraud Exposure",      "score": round((1 - fraud_rate) * 100),   "weight": 0.25},
+        {"name": "Spending Consistency","score": round(spend_consistency * 100),   "weight": 0.15},
+        {"name": "Recipient Diversity", "score": round(rec_diversity * 100),       "weight": 0.15},
+        {"name": "Payment Velocity",    "score": round(time_consistency * 100),    "weight": 0.10},
+        {"name": "Savings Rate",        "score": round(savings_proxy * 100),       "weight": 0.15},
+    ]
+
+    raw = sum(d['score'] * d['weight'] for d in dimensions)
+    composite = round(300 + raw * 5.5)
+
+    grade = (
+        'A+' if composite >= 800 else 'A' if composite >= 750 else
+        'B+' if composite >= 700 else 'B' if composite >= 650 else
+        'C+' if composite >= 600 else 'C' if composite >= 550 else 'D'
+    )
+
+    actions = []
+    for d in sorted(dimensions, key=lambda x: x['score']):
+        if d['score'] < 70:
+            actions.append({
+                "dimension": d['name'],
+                "score": d['score'],
+                "impact": "HIGH" if d['weight'] >= 0.2 else "MEDIUM" if d['weight'] >= 0.15 else "LOW",
+            })
+
+    return jsonify({
+        "composite":   composite,
+        "grade":       grade,
+        "dimensions":  dimensions,
+        "actions":     actions[:3],
+        "stats": {
+            "tx_count":    len(transactions),
+            "fraud_count": fraud_count,
+            "fraud_rate":  round(fraud_rate * 100, 1),
+            "total_spent": total_spent,
+        },
+    })
+
+
+# ── Week 17: Pre-Payment Shield ───────────────────────────────────────────────
+@app.route('/prepayment-check', methods=['POST'])
+def prepayment_check():
+    """Real-time risk gate before sending money — 6-factor analysis."""
+    from datetime import datetime
+    import math
+
+    data          = request.get_json(silent=True) or {}
+    target_upi    = data.get('targetUpi', '')
+    amount        = float(data.get('amount', 0))
+    transactions  = data.get('transactions', [])
+    all_known_upis = data.get('allKnownUpis', [])
+
+    now = datetime.now()
+    hour = now.hour
+    dow  = now.weekday()  # Mon=0
+
+    # Levenshtein
+    def levenshtein(a, b):
+        if not a or not b: return 99
+        m, n = len(a), len(b)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+        for i in range(m + 1): dp[i][0] = i
+        for j in range(n + 1): dp[0][j] = j
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                dp[i][j] = dp[i-1][j-1] if a[i-1] == b[j-1] else 1 + min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
+        return dp[m][n]
+
+    # Spoofing check
+    min_dist, closest_upi = 99, ''
+    for u in all_known_upis:
+        if u == target_upi: continue
+        d = levenshtein(u.lower(), target_upi.lower())
+        if d < min_dist: min_dist, closest_upi = d, u
+    is_spoof = 0 < min_dist <= 2
+
+    # Prior txs with recipient
+    prior_txs = [t for t in transactions if (t.get('receiverUPI') or t.get('receiver', '')) == target_upi]
+    fraud_with_recipient = sum(1 for t in prior_txs if t.get('fraudVerdict') in ('HIGH_RISK', 'MEDIUM_RISK'))
+
+    # Amount z-score
+    amounts = [float(t.get('amount', 0)) for t in transactions if t.get('amount')]
+    avg_a = sum(amounts) / len(amounts) if amounts else 1
+    std_a = math.sqrt(sum((a - avg_a)**2 for a in amounts) / len(amounts)) if len(amounts) > 1 else 1
+    z_score = (amount - avg_a) / max(std_a, 1)
+
+    odd_hour = hour <= 5
+    DOW_RISK = {0: 1.4, 1: 0.7, 2: 0.8, 3: 0.9, 4: 1.0, 5: 1.3, 6: 0.9}
+    dow_mult = DOW_RISK.get((dow + 1) % 7, 1.0)
+    is_round = amount > 0 and (amount % 100 == 0 or amount % 500 == 0 or amount % 1000 == 0)
+
+    # Recent velocity
+    recent_count = 0
+    for t in transactions:
+        try:
+            ts_str = t.get('timestamp') or t.get('date', '')
+            ts = datetime.fromisoformat(str(ts_str)[:19].replace('T', ' ')) if ts_str else now
+            if (now - ts).total_seconds() < 1800: recent_count += 1
+        except Exception: pass
+
+    factors = [
+        {"key": "recipient",  "label": "Recipient History",    "score": 70 if fraud_with_recipient else (5 if prior_txs else 55), "risk": "high" if fraud_with_recipient else ("safe" if prior_txs else "medium")},
+        {"key": "spoof",      "label": "UPI Spoofing Check",   "score": 85 if is_spoof else 5,   "risk": "high" if is_spoof else "safe"},
+        {"key": "amount",     "label": "Amount Risk",          "score": 80 if z_score > 2 else (45 if z_score > 1 else 10), "risk": "high" if z_score > 2 else ("medium" if z_score > 1 else "safe")},
+        {"key": "time",       "label": "Transaction Timing",   "score": 80 if odd_hour else (45 if dow_mult > 1.2 else 10), "risk": "high" if odd_hour else ("medium" if dow_mult > 1.2 else "safe")},
+        {"key": "velocity",   "label": "Payment Velocity",     "score": 70 if recent_count >= 2 else 5, "risk": "high" if recent_count >= 2 else "safe"},
+        {"key": "pattern",    "label": "Round Number Pattern",  "score": 30 if is_round else 5,  "risk": "medium" if is_round else "safe"},
+    ]
+
+    high_count = sum(1 for f in factors if f['risk'] == 'high')
+    composite  = round(sum(f['score'] for f in factors) / len(factors))
+    verdict    = "BLOCK" if high_count >= 2 or composite >= 65 else "CAUTION" if high_count >= 1 or composite >= 35 else "ALLOW"
+    confidence = round(60 + abs(50 - composite) * 0.8)
+
+    return jsonify({
+        "target_upi":    target_upi,
+        "amount":        amount,
+        "verdict":       verdict,
+        "composite_risk": composite,
+        "confidence":    confidence,
+        "factors":       factors,
+        "spoof_detected": is_spoof,
+        "closest_upi":   closest_upi,
+        "spoof_distance": min_dist,
+        "summary": (
+            f"BLOCK: {high_count} high-risk factor(s) detected. Do not proceed."
+            if verdict == "BLOCK" else
+            f"CAUTION: Some risk signals found. Verify recipient before sending."
+            if verdict == "CAUTION" else
+            f"ALLOW: No significant risk factors. Safe to proceed."
+        ),
+    })
 
 
 # ══════════════════════════════════════════════════════════════════════════════

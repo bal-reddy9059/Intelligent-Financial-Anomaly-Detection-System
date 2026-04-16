@@ -1,0 +1,56 @@
+flowchart TB
+    START([📥 Load User\nTransactions])
+
+    subgraph BUILD["Build Transaction Graph"]
+        B1[Extract sender UPI\nfor each transaction]
+        B2[Extract receiver UPI\nfor each transaction]
+        B3[Create Node if\nnot exists]
+        B4[Add Edge\nsender → receiver]
+        B5{Is transaction\nflagged FRAUD?}
+        B6[Set node risk = 75+]
+        B7[Set node risk = 10]
+    end
+
+    subgraph UF["⚙️ Union-Find Algorithm"]
+        UF1[Initialize parent\narray for all nodes]
+        UF2[For each edge\nunion sender + receiver]
+        UF3[find with path\ncompression]
+        UF4[Group nodes by\ncommon root]
+        UF5[Result: Clusters\nof connected accounts]
+    end
+
+    subgraph RISK["🔴 Risk Propagation"]
+        RP1{Any node in\ncluster HIGH RISK?}
+        RP2[Elevate ALL cluster\nmembers risk score]
+        RP3[Mark as\nFraud Ring]
+        RP4[Keep current\nrisk scores]
+    end
+
+    subgraph LAYOUT["🗺️ Force Layout"]
+        FL1[Place nodes\nin circle]
+        FL2[Apply repulsion\nbetween all pairs]
+        FL3[Apply spring\nalong edges]
+        FL4[Apply center\ngravity]
+        FL5[Run 120 ticks\nvia requestAnimationFrame]
+        FL6[Render SVG\ngraph]
+    end
+
+    START --> BUILD
+    B1 & B2 --> B3 --> B4
+    B4 --> B5
+    B5 -->|Yes| B6
+    B5 -->|No| B7
+    B6 & B7 --> UF1
+
+    UF1 --> UF2 --> UF3 --> UF4 --> UF5
+    UF5 --> RP1
+    RP1 -->|Yes| RP2 --> RP3
+    RP1 -->|No| RP4
+    RP3 & RP4 --> FL1
+    FL1 --> FL2 --> FL3 --> FL4 --> FL5 --> FL6
+
+    style BUILD fill:#0f172a,stroke:#3b82f6,color:#bfdbfe
+    style UF fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style RISK fill:#1c0a0a,stroke:#ef4444,color:#fecaca
+    style LAYOUT fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style RP3 fill:#7f1d1d,stroke:#ef4444,color:#fecaca

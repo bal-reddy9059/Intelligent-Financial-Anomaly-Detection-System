@@ -49,6 +49,15 @@ import CommunityReports from './components/logic/CommunityReports'
 import FraudTimeline from './components/logic/FraudTimeline'
 import PaymentHealth from './components/logic/PaymentHealth'
 import SecurityBadges from './components/logic/SecurityBadges'
+import VoicePayAssistant from './components/logic/VoicePayAssistant'
+import SpendingDNA from './components/logic/SpendingDNA'
+import FutureRiskPredictor from './components/logic/FutureRiskPredictor'
+import AIFinancialStory from './components/logic/AIFinancialStory'
+import BudgetPredictor from './components/logic/BudgetPredictor'
+import AnomalyExplainer from './components/logic/AnomalyExplainer'
+import FraudRingDetector from './components/logic/FraudRingDetector'
+import FinancialHealthScore from './components/logic/FinancialHealthScore'
+import PrePaymentShield from './components/logic/PrePaymentShield'
 
 const PrivateRoute = ({ element }) => {
   const [authState, setAuthState] = useState('loading');
@@ -114,9 +123,18 @@ const RouteTitleUpdater = () => {
       '/spending-coach': 'SafePayAI - AI Spending Coach',
       '/contact-trust': 'SafePayAI - Contact Trust Scores',
       '/community-reports': 'SafePayAI - Community Reports',
-      '/fraud-timeline': 'SafePayAI - Fraud Prediction Timeline',
-      '/payment-health': 'SafePayAI - Payment Health Score',
-      '/security-badges': 'SafePayAI - Security Achievements',
+      '/fraud-timeline': 'AegisAI - Fraud Prediction Timeline',
+      '/payment-health': 'AegisAI - Payment Health Score',
+      '/security-badges': 'AegisAI - Security Achievements',
+      '/voice-pay': 'AegisAI - Voice Pay Assistant',
+      '/spending-dna': 'AegisAI - Spending DNA Analyzer',
+      '/future-risk': 'AegisAI - Future Risk Predictor',
+      '/financial-story': 'AegisAI - AI Financial Chronicle',
+      '/budget-predictor': 'AegisAI - Smart Budget Predictor',
+      '/anomaly-explainer': 'AegisAI - Transaction Anomaly Explainer',
+      '/fraud-ring': 'AegisAI - Fraud Ring Detector',
+      '/health-score': 'AegisAI - Financial Health Score',
+      '/prepayment-shield': 'AegisAI - Pre-Payment Shield',
     };
 
     const title = routeToTitle[location.pathname] || 'SafePayAI';
@@ -187,6 +205,18 @@ const App = () => {
         <Route path="/fraud-timeline" element={<PrivateRoute element={<FraudTimeline />} />} />
         <Route path="/payment-health" element={<PrivateRoute element={<PaymentHealth />} />} />
         <Route path="/security-badges" element={<PrivateRoute element={<SecurityBadges />} />} />
+        {/* Week 9–11 — Innovative Features */}
+        <Route path="/voice-pay" element={<PrivateRoute element={<VoicePayAssistant />} />} />
+        <Route path="/spending-dna" element={<PrivateRoute element={<SpendingDNA />} />} />
+        <Route path="/future-risk" element={<PrivateRoute element={<FutureRiskPredictor />} />} />
+        {/* Week 12–14 — AI-Driven Insights */}
+        <Route path="/financial-story" element={<PrivateRoute element={<AIFinancialStory />} />} />
+        <Route path="/budget-predictor" element={<PrivateRoute element={<BudgetPredictor />} />} />
+        <Route path="/anomaly-explainer" element={<PrivateRoute element={<AnomalyExplainer />} />} />
+        {/* Week 15–17 — Advanced Intelligence */}
+        <Route path="/fraud-ring" element={<PrivateRoute element={<FraudRingDetector />} />} />
+        <Route path="/health-score" element={<PrivateRoute element={<FinancialHealthScore />} />} />
+        <Route path="/prepayment-shield" element={<PrivateRoute element={<PrePaymentShield />} />} />
       </Routes>
     </Router>
   );

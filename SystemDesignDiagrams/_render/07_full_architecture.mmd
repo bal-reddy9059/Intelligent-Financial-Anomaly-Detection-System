@@ -1,0 +1,52 @@
+graph TB
+    subgraph USER["👤 User Layer"]
+        U1[Mobile Browser]
+        U2[Desktop Browser]
+    end
+
+    subgraph FRONTEND["⚛️ React 18 Frontend — Vite + TailwindCSS"]
+        direction TB
+        F1[🏠 Dashboard\n& Core Banking]
+        F2[🔐 Auth\nFirebase Auth]
+        F3[🤖 AI Features\nWeek 9–11]
+        F4[📊 Insights\nWeek 12–14]
+        F5[🛡️ Advanced AI\nWeek 15–17]
+        F6[📈 ML Analytics\nPanel]
+    end
+
+    subgraph FIREBASE["🔥 Firebase Cloud"]
+        FB1[(Firestore\nDatabase)]
+        FB2[Firebase\nAuthentication]
+        FB3[Real-time\nListeners]
+    end
+
+    subgraph FLASK["🐍 Flask ML Server — Python"]
+        direction TB
+        ML1[Random Forest\n22 Features]
+        ML2[Isolation Forest\nDrift Detection]
+        ML3[SHAP Explainer\nAttribution]
+        ML4[Week 9–11 APIs\nVoice · DNA · Risk]
+        ML5[Week 12–14 APIs\nStory · Budget · Explain]
+        ML6[Week 15–17 APIs\nRing · Health · Shield]
+    end
+
+    subgraph ALGORITHMS["⚙️ Core Algorithms"]
+        A1[Union-Find\nFraud Rings]
+        A2[Levenshtein\nSpoof Detection]
+        A3[Z-Score\nAmount Anomaly]
+        A4[DOW Multipliers\nTime-based Risk]
+    end
+
+    U1 & U2 --> FRONTEND
+    FRONTEND <--> FB1
+    FRONTEND <--> FB2
+    FB1 <--> FB3
+    FRONTEND <--> FLASK
+    FLASK --> ALGORITHMS
+    ML1 & ML2 & ML3 --> FLASK
+
+    style USER fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+    style FRONTEND fill:#0f172a,stroke:#3b82f6,color:#bfdbfe
+    style FIREBASE fill:#1c1917,stroke:#f97316,color:#fed7aa
+    style FLASK fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style ALGORITHMS fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe

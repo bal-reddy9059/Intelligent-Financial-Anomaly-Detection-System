@@ -1,0 +1,54 @@
+flowchart TD
+    USER([👤 User Action])
+
+    subgraph REACT["⚛️ React Layer"]
+        R1[Component State\nuseState / useEffect]
+        R2[Firebase SDK\ngetDocs / onSnapshot]
+        R3[Axios / Fetch\nFlask API calls]
+        R4[Framer Motion\nAnimations]
+    end
+
+    subgraph FIRESTORE["🔥 Firestore"]
+        FS1[(transactions\ncollection)]
+        FS2[(users\ncollection)]
+        FS3[(notifications\ncollection)]
+        FS4[Real-time\nListener]
+    end
+
+    subgraph FLASK["🐍 Flask Server"]
+        FL1[Request\nValidation]
+        FL2[Feature\nExtraction]
+        FL3[RF Model\nInference]
+        FL4[SHAP\nCompute]
+        FL5[Response\nJSON]
+    end
+
+    subgraph DUAL_QUERY["🔍 Dual Firestore Query"]
+        DQ1[Query by\nuserId field]
+        DQ2[Query by\nsenderUPI field]
+        DQ3[Merge + Dedup\nby document id]
+    end
+
+    USER --> R1
+    R1 --> DUAL_QUERY
+    DQ1 --> FS1
+    DQ2 --> FS1
+    FS1 --> DQ3
+    DQ3 --> R1
+
+    R2 --> FS2
+    FS2 --> R1
+    FS4 --> FS3
+    FS3 --> R1
+
+    R1 --> R3
+    R3 --> FL1
+    FL1 --> FL2 --> FL3 --> FL4 --> FL5
+    FL5 --> R1
+    R1 --> R4
+    R4 --> USER
+
+    style REACT fill:#0f172a,stroke:#3b82f6,color:#bfdbfe
+    style FIRESTORE fill:#1c1917,stroke:#f97316,color:#fed7aa
+    style FLASK fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style DUAL_QUERY fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe

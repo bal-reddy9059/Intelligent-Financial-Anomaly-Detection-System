@@ -1,6 +1,20 @@
 # AegisAI — ML Data Flow & Pipeline
 
-> GAN training, feature engineering, and real-time inference pipeline
+> GAN training, feature engineering, and real-time inference pipeline.
+> Pre-rendered PNGs are embedded below each section where available.
+
+---
+
+## Pre-Rendered Diagram Gallery
+
+### Data Flow Overview
+![Data Flow Diagram](./_render/13_data_flow.png)
+
+### Fraud Ring Detection Algorithm
+![Fraud Ring Algorithm](./_render/10_fraud_ring_algorithm.png)
+
+### Financial Health Score Model
+![Health Score Model](./_render/11_health_score_model.png)
 
 ---
 
@@ -197,4 +211,277 @@ flowchart LR
     RESULTS --> VIZ["Visualizations<br/>Confusion Matrix<br/>ROC Curve<br/>Anomaly Distribution<br/>Cluster Chart"]
     RESULTS --> NL2["AI Natural Language<br/>Summary Report"]
     RESULTS --> DRIFT["Dataset Drift Check<br/>vs. baseline distribution"]
+```
+
+---
+
+## Week 9–11: AI Feature Data Flows
+
+### Voice Pay Data Flow
+
+```mermaid
+flowchart LR
+    subgraph BROWSER["🎙️ Browser"]
+        SR["SpeechRecognition\nlang: en-IN\ninterimResults: true"]
+        TR["Raw Transcript\nstring"]
+    end
+
+    subgraph NLP["🔤 Client-side NLP"]
+        P1["Regex: intent\nsend|pay|check|show"]
+        P2["Regex: amount\n\\d+ hundred|thousand|k"]
+        P3["Regex: recipient\nto [name@upi]"]
+        P4["Regex: remarks\nfor [purpose]"]
+        RESULT["Parsed Intent\n{ intent, amount,\nrecipient, remarks }"]
+    end
+
+    subgraph FLASK["🐍 Flask"]
+        VP["/voice-parse\nServer NLP backup"]
+    end
+
+    subgraph ACTION["🚀 Action"]
+        NAV["navigate()\n/send-money?amount=X\n&recipient=Y&remarks=Z"]
+        SHOW["Show transactions\n/transactions"]
+        BAL["Show balance\n/dashboard"]
+    end
+
+    SR --> TR --> P1 & P2 & P3 & P4 --> RESULT
+    RESULT --> FLASK
+    RESULT -->|intent=SEND| NAV
+    RESULT -->|intent=HISTORY| SHOW
+    RESULT -->|intent=BALANCE| BAL
+
+    style BROWSER fill:#0f172a,stroke:#3b82f6,color:#bfdbfe
+    style NLP fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style FLASK fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style ACTION fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+```
+
+### Spending DNA Data Flow
+
+```mermaid
+flowchart TD
+    TXS[(Firestore\nTransactions)]
+
+    subgraph SPLIT["📅 Time Split"]
+        CUR["Current month\ntransactions"]
+        BASE["Last month\ntransactions"]
+    end
+
+    subgraph DNA["🧬 8 DNA Dimensions"]
+        D1["🍔 Food & Dining\nKeywords: swiggy, zomato, restaurant"]
+        D2["🛍️ Shopping\nKeywords: amazon, flipkart, myntra"]
+        D3["🚗 Transport\nKeywords: uber, ola, metro"]
+        D4["🎬 Entertainment\nKeywords: netflix, spotify, cinema"]
+        D5["🏥 Healthcare\nKeywords: pharmacy, hospital, clinic"]
+        D6["💡 Utilities\nKeywords: electricity, wifi, recharge"]
+        D7["📚 Education\nKeywords: course, tuition, books"]
+        D8["📦 Other\nAll remaining transactions"]
+    end
+
+    subgraph ANOMALY["🔍 Anomaly Score"]
+        MAD["Mean Absolute Deviation\nbetween baseline and current"]
+        SCORE["anomalyScore = MAD × 2\nclamped 0–100"]
+        FLAGS["Flag dimensions\nwith ≥15% shift"]
+    end
+
+    TXS --> SPLIT
+    CUR & BASE --> D1 & D2 & D3 & D4 & D5 & D6 & D7 & D8
+    D1 & D2 & D3 & D4 & D5 & D6 & D7 & D8 --> MAD --> SCORE --> FLAGS
+
+    style SPLIT fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+    style DNA fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style ANOMALY fill:#1c0a0a,stroke:#ef4444,color:#fecaca
+```
+
+### Future Risk Predictor Data Flow
+
+```mermaid
+flowchart LR
+    subgraph INPUT["📥 Inputs"]
+        UPI["Target UPI ID"]
+        TXS["User Transactions"]
+        COMM["Community Reports"]
+    end
+
+    subgraph SCORING["⚙️ 4-Factor Scoring"]
+        V["Velocity Score\n0–40 pts\nBased on tx frequency"]
+        A["Amount Score\n0–20 pts\nBased on avg tx size"]
+        F["Fraud Score\n0–30 pts\nBased on past fraud flags"]
+        C["Community Score\n0–10 pts\nBased on community reports"]
+        BASE["base_risk = V + A + F + C"]
+    end
+
+    subgraph DOW["📅 Day-of-Week Multipliers"]
+        SUN["Sunday × 1.4"]
+        MON["Monday × 0.7"]
+        TUE["Tuesday × 0.8"]
+        WED["Wednesday × 0.9"]
+        THU["Thursday × 1.0"]
+        FRI["Friday × 1.3"]
+        SAT["Saturday × 1.5"]
+    end
+
+    subgraph OUTPUT["📤 7-Day Forecast"]
+        DAY1["Today"]
+        DAY2["Tomorrow"]
+        DAY3["Day 3"]
+        DAY4["Day 4"]
+        DAY5["Day 5"]
+        DAY6["Day 6"]
+        DAY7["Day 7"]
+    end
+
+    INPUT --> SCORING
+    BASE --> DOW
+    DOW --> OUTPUT
+
+    style INPUT fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+    style SCORING fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style DOW fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style OUTPUT fill:#1c1917,stroke:#f97316,color:#fed7aa
+```
+
+---
+
+## Week 12–14: AI Insight Data Flows
+
+### Budget Predictor Data Flow
+
+```mermaid
+flowchart TD
+    TXS[(Firestore Transactions)]
+    NOW["Today\nDay M of N days in month"]
+
+    subgraph VELOCITY["⚡ Velocity Calculation"]
+        SPENT["spentSoFar = Σ this-month amounts"]
+        ELAPSED["daysElapsed = day of month"]
+        VEL["dailyVelocity = spentSoFar / daysElapsed"]
+    end
+
+    subgraph PROJECTION["📈 Month-End Projection"]
+        LEFT["daysLeft = N - M"]
+        PROJ["projectedTotal = spentSoFar + velocity × daysLeft"]
+        BUDGET["autoBudget = manual OR lastMonth × 1.1"]
+        REM["remaining = budget - spentSoFar"]
+        SAFE["safeDaily = remaining / daysLeft"]
+    end
+
+    subgraph ALERT["🚨 Exhaustion Alert"]
+        CHECK{velocity > safeDaily?}
+        DAYS["daysToExhaust = remaining / velocity"]
+        DATE["exhaustionDate = today + daysToExhaust"]
+    end
+
+    subgraph RISK["🎚️ Risk Level"]
+        BURN["burnRate = projectedTotal / budget"]
+        R1["SAFE < 0.85"]
+        R2["MEDIUM 0.85–1.0"]
+        R3["HIGH 1.0–1.2"]
+        R4["CRITICAL > 1.2"]
+    end
+
+    TXS & NOW --> VELOCITY
+    VELOCITY --> PROJECTION
+    PROJECTION --> CHECK
+    CHECK -->|Yes| DAYS --> DATE
+    PROJECTION --> BURN --> R1 & R2 & R3 & R4
+
+    style VELOCITY fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+    style PROJECTION fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style ALERT fill:#1c0a0a,stroke:#ef4444,color:#fecaca
+    style RISK fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+```
+
+---
+
+## Week 15–17: Advanced AI Data Flows
+
+### Fraud Ring Detection Data Flow
+
+```mermaid
+flowchart LR
+    TXS[(All Transactions)]
+
+    subgraph GRAPH["Build Graph"]
+        NODES["Extract unique\nUPI IDs as nodes"]
+        EDGES["Each transaction\n= directed edge"]
+        RISK["Set node risk:\nHIGH_RISK → 90\nMEDIUM_RISK → 55\nSAFE → 10"]
+    end
+
+    subgraph UF["Union-Find"]
+        UF1["Initialize parent[x] = x\nfor all nodes"]
+        UF2["For each edge:\nunion(src, dst)"]
+        UF3["find() with\npath compression"]
+        UF4["clusters() =\ngroup by root"]
+    end
+
+    subgraph PROPAGATE["Risk Propagation"]
+        SCAN["For each cluster:\nmaxRisk = max(node.risk)"]
+        LIFT{maxRisk >= 75?}
+        RAISE["Elevate low-risk nodes\nto min 35"]
+        RING["Mark cluster\nas Fraud Ring"]
+    end
+
+    TXS --> GRAPH
+    NODES & EDGES & RISK --> UF
+    UF4 --> PROPAGATE
+    SCAN --> LIFT
+    LIFT -->|Yes| RAISE --> RING
+
+    style GRAPH fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+    style UF fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style PROPAGATE fill:#1c0a0a,stroke:#ef4444,color:#fecaca
+```
+
+### Pre-Payment Shield Data Flow
+
+```mermaid
+flowchart TD
+    subgraph INPUTS["📥 User Inputs"]
+        UPI["Target UPI ID"]
+        AMT["Amount ₹"]
+        KNOWN["All known UPIs\nfrom history"]
+        HIST["Transaction history"]
+    end
+
+    subgraph FACTOR1["Factor 1 — Spoof Detection"]
+        LEV["Levenshtein(targetUPI, each known UPI)"]
+        SPOOF{minDistance\n<= 2 and > 0?}
+        SPOOF_Y["Risk: HIGH 85/100"]
+        SPOOF_N["Risk: SAFE 5/100"]
+    end
+
+    subgraph FACTOR2["Factor 2 — Amount Z-Score"]
+        AVG["avgAmount from history"]
+        STD["stdAmount from history"]
+        Z["z = (amount - avg) / std"]
+        Z_H{z > 2?}
+        Z_M{z > 1?}
+    end
+
+    subgraph VERDICT["⚖️ Final Verdict"]
+        COMPOSITE["compositeRisk = avg(all 6 factor scores)"]
+        HIGH_CNT["highCount = factors with risk=high"]
+        V{Decision}
+        BLOCK["🔴 BLOCK\nhighCount>=2 or risk>=65"]
+        CAUTION["🟡 CAUTION\nhighCount>=1 or risk>=35"]
+        ALLOW["🟢 ALLOW\nAll clear"]
+    end
+
+    INPUTS --> FACTOR1 & FACTOR2
+    SPOOF -->|Yes| SPOOF_Y
+    SPOOF -->|No| SPOOF_N
+    Z_H -->|Yes| Z_HIGH["HIGH 80/100"]
+    Z_M -->|Yes| Z_MED["MEDIUM 45/100"]
+
+    SPOOF_Y & SPOOF_N & Z_HIGH & Z_MED --> COMPOSITE
+    COMPOSITE & HIGH_CNT --> V
+    V --> BLOCK & CAUTION & ALLOW
+
+    style INPUTS fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
+    style FACTOR1 fill:#1c0a0a,stroke:#ef4444,color:#fecaca
+    style FACTOR2 fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style VERDICT fill:#0f2b1e,stroke:#10b981,color:#a7f3d0
+    style BLOCK fill:#7f1d1d,stroke:#ef4444,color:#fecaca
+    style ALLOW fill:#064e3b,stroke:#10b981,color:#a7f3d0
 ```

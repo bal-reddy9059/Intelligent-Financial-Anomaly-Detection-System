@@ -1,6 +1,20 @@
 # AegisAI — Frontend Component Map
 
-> Complete hierarchy of all 54 React components across Week 1–8 feature delivery
+> Complete hierarchy of all 70+ React components across Week 1–17 feature delivery.
+> Pre-rendered PNGs are embedded below each section where available.
+
+---
+
+## Pre-Rendered Diagram Gallery
+
+### Complete Feature Mind Map (All 57 Routes)
+![Feature Mind Map](./_render/12_feature_map.png)
+
+### Full System Architecture
+![Full System Architecture](./_render/07_full_architecture.png)
+
+### Week-by-Week Evolution Timeline
+![Week Evolution Timeline](./_render/14_week_evolution.png)
 
 ---
 
@@ -89,6 +103,24 @@ graph TD
         FH["FraudHeatmap.jsx<br/>Geographic fraud density"]
     end
 
+    subgraph W911["Week 9–11 — Innovative AI"]
+        VOICE["VoicePayAssistant.jsx<br/>Web Speech API · 28-bar waveform<br/>NLP intent parser · Command history"]
+        DNA["SpendingDNA.jsx<br/>8-dim behavioral profile<br/>RadarChart baseline vs current<br/>SVG anomaly ring"]
+        FUTURE["FutureRiskPredictor.jsx<br/>4-factor scoring · DOW multipliers<br/>7-day AreaChart · UPI quick check"]
+    end
+
+    subgraph W1214["Week 12–14 — AI Insights"]
+        STORY["AIFinancialStory.jsx<br/>5-chapter typewriter narrative<br/>Book-cover pre-gen screen<br/>Framer Motion character animation"]
+        BUDGET["BudgetPredictor.jsx<br/>Daily velocity tracking<br/>Month-end projection curve<br/>Exhaustion date alert"]
+        EXPLAINER["AnomalyExplainer.jsx<br/>Split-panel forensic UI<br/>SHAP-style 6-factor bars<br/>RadarChart + SVG score ring"]
+    end
+
+    subgraph W1517["Week 15–17 — Advanced AI"]
+        RING["FraudRingDetector.jsx<br/>Union-Find clustering<br/>SVG force-directed graph<br/>Pan · zoom · drag · node inspector"]
+        HEALTH["FinancialHealthScore.jsx<br/>0–850 composite score<br/>6-dimension RadarChart<br/>4-week trend · letter grade"]
+        SHIELD["PrePaymentShield.jsx<br/>Levenshtein spoof check<br/>6-factor real-time gate<br/>Green/Yellow/Red verdict"]
+    end
+
     subgraph UTIL["Utility"]
         SET["Settings.jsx"]
         HELP["HelpSupport.jsx<br/>Ticket submission"]
@@ -97,6 +129,7 @@ graph TD
     APP --> LAYOUT
     APP --> SIGNIN
     APP --> W1 & W2 & W3 & W4 & W5 & W6 & W7 & W8 & MLSUITE & UTIL
+    APP --> W911 & W1214 & W1517
 
     SB & HDR -.->|"used by all pages"| W1
     HOME --> TSIM
@@ -112,6 +145,9 @@ graph TD
     style W7 fill:#172554,stroke:#6366f1,color:#e0e7ff
     style W8 fill:#713f12,stroke:#eab308,color:#fef9c3
     style MLSUITE fill:#0f172a,stroke:#94a3b8,color:#e2e8f0
+    style W911 fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style W1214 fill:#0c1a2e,stroke:#06b6d4,color:#cffafe
+    style W1517 fill:#0c2e1a,stroke:#10b981,color:#a7f3d0
     style UTIL fill:#1e293b,stroke:#475569,color:#e2e8f0
 ```
 
@@ -211,6 +247,24 @@ graph LR
         R45["/feedback-center  →  FeedbackCenter.jsx"]
     end
 
+    subgraph AI911["Week 9–11 Innovative AI"]
+        R48["/voice-pay  →  VoicePayAssistant.jsx"]
+        R49["/spending-dna  →  SpendingDNA.jsx"]
+        R50["/future-risk  →  FutureRiskPredictor.jsx"]
+    end
+
+    subgraph AI1214["Week 12–14 AI Insights"]
+        R51["/financial-story  →  AIFinancialStory.jsx"]
+        R52["/budget-predictor  →  BudgetPredictor.jsx"]
+        R53["/anomaly-explainer  →  AnomalyExplainer.jsx"]
+    end
+
+    subgraph AI1517["Week 15–17 Advanced AI"]
+        R54["/fraud-ring  →  FraudRingDetector.jsx"]
+        R55["/health-score  →  FinancialHealthScore.jsx"]
+        R56["/prepayment-shield  →  PrePaymentShield.jsx"]
+    end
+
     subgraph UTIL2["Utility"]
         R46["/settings  →  Settings.jsx"]
         R47["/help-support  →  HelpSupport.jsx"]
@@ -221,7 +275,53 @@ graph LR
     style TOOLS fill:#1e3a5f,stroke:#3b82f6,color:#e0f2fe
     style FRAUD fill:#4a044e,stroke:#a855f7,color:#f3e8ff
     style ML fill:#0f172a,stroke:#94a3b8,color:#e2e8f0
+    style AI911 fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style AI1214 fill:#0c1a2e,stroke:#06b6d4,color:#cffafe
+    style AI1517 fill:#0c2e1a,stroke:#10b981,color:#a7f3d0
     style UTIL2 fill:#1e293b,stroke:#475569,color:#e2e8f0
+```
+
+---
+
+## Flask API Map (Week 9–17)
+
+```mermaid
+graph LR
+    subgraph W911["Week 9–11"]
+        EP1["POST /voice-parse\nNLP intent extraction"]
+        EP2["POST /spending-dna\n8-dim profile + anomaly score"]
+        EP3["GET|POST /future-risk/upi_id\n7-day DOW risk forecast"]
+    end
+
+    subgraph W1214["Week 12–14"]
+        EP4["POST /financial-story\n5-chapter narrative generator"]
+        EP5["POST /budget-predict\nVelocity + exhaustion forecast"]
+        EP6["POST /explain-transaction\nSHAP 6-factor forensics"]
+    end
+
+    subgraph W1517["Week 15–17"]
+        EP7["POST /fraud-ring-analysis\nUnion-Find cluster detection"]
+        EP8["POST /financial-health\n0–850 composite score"]
+        EP9["POST /prepayment-check\nLevenshtein + 6-factor gate"]
+    end
+
+    subgraph ALGOS["Algorithms Used"]
+        A1["Union-Find\nFraud Ring"]
+        A2["Levenshtein\nSpoof Check"]
+        A3["Z-Score\nAmount Anomaly"]
+        A4["DOW Weights\nTemporal Risk"]
+        A5["Weighted Avg\nHealth Score"]
+    end
+
+    EP7 --> A1
+    EP9 --> A2 & A3
+    EP3 --> A4
+    EP8 --> A5
+
+    style W911 fill:#1a0a2e,stroke:#8b5cf6,color:#ddd6fe
+    style W1214 fill:#0c1a2e,stroke:#06b6d4,color:#cffafe
+    style W1517 fill:#0c2e1a,stroke:#10b981,color:#a7f3d0
+    style ALGOS fill:#1e1b4b,stroke:#6366f1,color:#c7d2fe
 ```
 
 ---

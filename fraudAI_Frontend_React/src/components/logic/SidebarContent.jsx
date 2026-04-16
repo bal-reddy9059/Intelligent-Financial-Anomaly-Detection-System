@@ -49,6 +49,14 @@ import {
   TrendingUp,
   HeartPulse,
   Trophy,
+  Mic,
+  Dna,
+  Crosshair,
+  BookOpen,
+  ScanLine,
+  GitFork,
+  HeartHandshake,
+  ShieldCheck,
 } from 'lucide-react';
 
 export default function SidebarContent() {
@@ -95,6 +103,18 @@ export default function SidebarContent() {
     { icon: TrendingUp,           label: "Fraud Timeline",      path: "/fraud-timeline" },
     { icon: HeartPulse,           label: "Payment Health",      path: "/payment-health" },
     { icon: Trophy,               label: "Achievements",        path: "/security-badges" },
+    // Week 9–11 — Innovative
+    { icon: Mic,                  label: "Voice Pay",           path: "/voice-pay" },
+    { icon: Dna,                  label: "Spending DNA",        path: "/spending-dna" },
+    { icon: Crosshair,            label: "Future Risk AI",      path: "/future-risk" },
+    // Week 12–14
+    { icon: BookOpen,             label: "Financial Chronicle",  path: "/financial-story" },
+    { icon: PiggyBank,            label: "Budget Predictor",     path: "/budget-predictor" },
+    { icon: ScanLine,             label: "Anomaly Explainer",    path: "/anomaly-explainer" },
+    // Week 15–17
+    { icon: GitFork,              label: "Fraud Ring Detector",  path: "/fraud-ring" },
+    { icon: HeartHandshake,       label: "Health Score",         path: "/health-score" },
+    { icon: ShieldCheck,          label: "Pre-Payment Shield",   path: "/prepayment-shield" },
     // Existing
     { icon: ShieldAlert,          label: "Risk Profile",        path: "/risk-profile" },
     { icon: Map,                  label: "Fraud Heatmap",       path: "/fraud-heatmap" },
