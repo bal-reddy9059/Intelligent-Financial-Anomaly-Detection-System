@@ -495,3 +495,65 @@ export const db = getFirestore(app);
 ---
 
 *Built with React 18 · Firebase · Python Flask · Random Forest · Framer Motion · Recharts*
+
+---
+
+![Fraud Decision Flow](SystemDesignDiagrams/02_FraudDecisionFlow.png)
+*Fraud Decision Flow — from UPI entry to payment confirmation*
+
+---
+
+![ML Pipeline](SystemDesignDiagrams/03_MLPipeline.png)
+*ML Pipeline — GAN data generation → training → ensemble inference → explainability*
+
+---
+
+![Payment Sequence](SystemDesignDiagrams/04_PaymentSequence.png)
+*Payment Sequence — real-time fraud check with blocklist + Flask API*
+
+---
+
+![Biometric Auth Sequence](SystemDesignDiagrams/05_BiometricSequence.png)
+*Biometric Auth — WebAuthn fingerprint · Pattern lock · PIN flows*
+
+---
+
+![Component Map](SystemDesignDiagrams/06_ComponentMap.png)
+*Frontend Component Map — all 54 React components across Week 1–8*
+
+---
+
+## Security Model
+
+| Layer | Mechanism |
+|---|---|
+| **Network** | Firebase Auth JWT on every Firestore request |
+| **Database** | Per-collection Firestore rules — users can only read/write their own data |
+| **Payment** | Known fraud UPI blocklist (40+ IDs) + ensemble ML scoring |
+| **Auth** | WebAuthn (biometric) or Pattern Lock before every payment confirmation |
+| **Scam Detection** | 8-pattern dark pattern scanner on payment remarks |
+| **Velocity** | Cooling-off period enforcement between repeat payments |
+| **Community** | Crowd-sourced fraud reporting with corroboration voting |
+
+---
+
+## UI Snapshots
+
+![System Architecture](SystemDesignDiagrams/SystemDesign.png)
+*System Architecture Diagram*
+
+![AI Model Pipeline](SystemDesignDiagrams/AIMODEL_VISUAL.png)
+*AI Model Pipeline Visual*
+
+![Workflow Diagram](SystemDesignDiagrams/WorkFlowDiagram.png)
+*End-to-End Data Flow*
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+*Built with ❤️ for the DigiPay Pro NPCI Competition — Team 2026*
