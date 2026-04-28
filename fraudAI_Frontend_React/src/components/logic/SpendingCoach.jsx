@@ -93,7 +93,7 @@ function buildCoachResponse(question, stats) {
   if (q.toLowerCase().includes("fraud") || q.toLowerCase().includes("safe"))
     return fraudCount > 0
       ? `You have ${fraudCount} fraud alert(s) this week. Please review them in the Fraud Alerts section immediately. Always verify UPI requests from unknown IDs.`
-      : "No fraud alerts detected this week. Keep using SafePayAI's real-time scanning for every transaction!";
+      : "No fraud alerts detected this week. Keep using AegisAI's real-time scanning for every transaction!";
 
   if (q.toLowerCase().includes("budget"))
     return `Based on your last 4 weeks of spending, I suggest a weekly budget of ₹${Math.round((totalThisWeek + totalLastWeek) / 2 * 0.95).toLocaleString("en-IN")}. Break it down: ${categoryData.slice(0, 3).map((c) => `${c.name} ₹${Math.round(c.value * 0.95).toLocaleString("en-IN")}`).join(", ")}.`;
@@ -180,7 +180,7 @@ function generateInsights(transactions, categoryData, weeklyTrend) {
     insights.push({
       icon: Lightbulb,
       title: "Start Tracking More",
-      message: "Add more transactions to unlock personalised AI insights. The more data SafePayAI has, the smarter your coaching becomes.",
+      message: "Add more transactions to unlock personalised AI insights. The more data AegisAI has, the smarter your coaching becomes.",
       severity: "tip",
     });
   }

@@ -90,7 +90,7 @@ export default function NotificationsCenter() {
   async function seedSampleNotifications(uid) {
     const samples = [
       { type: "fraud_alert", title: "High-Risk Transaction Detected",
-        message: "A transaction of ₹8,500 was flagged as HIGH_RISK by SafePayAI. Review it immediately.",
+        message: "A transaction of ₹8,500 was flagged as HIGH_RISK by AegisAI. Review it immediately.",
         read: false, userId: uid, severity: "HIGH" },
       { type: "budget_warning", title: "Budget Limit Warning",
         message: "You've used 85% of your Entertainment budget this month.",

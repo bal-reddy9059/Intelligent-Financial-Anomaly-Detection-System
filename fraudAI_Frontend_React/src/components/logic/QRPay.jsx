@@ -170,7 +170,7 @@ export default function QRPay() {
   };
 
   const qrValue = upiId
-    ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(user?.displayName || "SafePayAI User")}`
+    ? `upi://pay?pa=${upiId}&pn=${encodeURIComponent(user?.displayName || "AegisAI User")}`
     : "";
 
   return (
@@ -232,7 +232,7 @@ export default function QRPay() {
                     <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-3 text-center max-w-xs">
                       <p className="text-xs text-yellow-400 font-medium mb-1">⚠ Simulation Only</p>
                       <p className="text-xs text-gray-400">
-                        This QR works <span className="text-white font-medium">within SafePayAI only</span>. External apps like GPay or PhonePe will show an error because this is a simulated UPI ID not registered on the real banking network.
+                        This QR works <span className="text-white font-medium">within AegisAI only</span>. External apps like GPay or PhonePe will show an error because this is a simulated UPI ID not registered on the real banking network.
                       </p>
                     </div>
                     <div className="flex gap-3 w-full max-w-xs">

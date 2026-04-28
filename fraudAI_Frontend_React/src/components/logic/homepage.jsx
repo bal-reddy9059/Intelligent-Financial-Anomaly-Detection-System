@@ -5689,7 +5689,7 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
               transition={{ delay: 0.2 }}
               className="flex flex-col items-center justify-center min-h-screen"
             >
-              <h1 className="text-4xl font-bold mb-8 text-center">Welcome to SafePay AI</h1>
+              <h1 className="text-4xl font-bold mb-8 text-center">Welcome to AegisAI</h1>
               <Button
                 onClick={handleGoogleSignIn}
                 className="px-8 py-4 bg-blue-500 text-white font-semibold rounded-lg shadow-lg hover:bg-blue-600 transition-all duration-300"

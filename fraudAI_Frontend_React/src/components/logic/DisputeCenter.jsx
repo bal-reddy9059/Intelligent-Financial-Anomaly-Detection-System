@@ -229,7 +229,7 @@ export default function DisputeCenter() {
           <div className="mb-5 flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs px-3 py-2.5 rounded-lg">
             <Shield className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
             <span>
-              SafePayAI investigates all disputes within 3-5 business days. For HIGH_RISK flagged transactions,
+              AegisAI investigates all disputes within 3-5 business days. For HIGH_RISK flagged transactions,
               we prioritise review within 24 hours. You can track status below.
             </span>
           </div>

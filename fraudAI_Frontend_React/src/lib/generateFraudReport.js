@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const BRAND = "SafePayAI";
+const BRAND = "AegisAI";
 const BRAND_COLOR = [59, 130, 246]; // blue-500
 const HIGH_COLOR = [239, 68, 68];   // red-500
 const MED_COLOR  = [245, 158, 11];  // amber-500

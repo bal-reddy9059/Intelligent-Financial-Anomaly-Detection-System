@@ -100,12 +100,12 @@ function smartReply(input, ctx) {
   const hi = name ? name.split(" ")[0] : "";
 
   if (/^(hi|hello|hey|good\s*(morning|evening|afternoon)|namaste)/i.test(q)) {
-    return `👋 Hello${hi ? ` ${hi}` : ""}! I'm your SafePayAI financial assistant.\n\nI can help you with:\n• 📊 Spending & transaction analysis\n• 🛡️ Fraud risk assessment\n• 💰 Budget tracking\n• 📈 Financial health & civil score\n• 💡 Personalized savings tips\n\nWhat would you like to know today?`;
+    return `👋 Hello${hi ? ` ${hi}` : ""}! I'm your AegisAI financial assistant.\n\nI can help you with:\n• 📊 Spending & transaction analysis\n• 🛡️ Fraud risk assessment\n• 💰 Budget tracking\n• 📈 Financial health & civil score\n• 💡 Personalized savings tips\n\nWhat would you like to know today?`;
   }
 
   if (q.includes("civil") || q.includes("credit score") || q.includes("cibil") || q.includes("score")) {
     const level = civilScore >= 750 ? "Excellent 🟢" : civilScore >= 650 ? "Good 🟡" : civilScore >= 550 ? "Fair 🟠" : "Poor 🔴";
-    return `📈 Your SafePayAI Financial Score: **${civilScore}/900** — ${level}\n\n` +
+    return `📈 Your AegisAI Financial Score: **${civilScore}/900** — ${level}\n\n` +
       `How it's calculated:\n` +
       `• 🔴 Fraud flags: -${flagged.length * 15} pts (${flagged.length} flagged)\n` +
       `• ⚠️ Recent alerts: -${recentFlag.length * 25} pts (last 7 days)\n` +

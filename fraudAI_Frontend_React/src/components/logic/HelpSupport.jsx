@@ -19,7 +19,7 @@ import { addDoc, collection, serverTimestamp } from "firebase/firestore"
 const AI_PATTERNS = [
   {
     keywords: ["fraud", "detect", "how", "work", "model", "ai", "machine learning", "ml"],
-    response: "SafePayAI uses three ML models in real-time: (1) Random Forest — pre-trained with 95% accuracy on 20 risk features, (2) Isolation Forest — unsupervised anomaly detection, (3) Autoencoder — deep learning reconstruction error. Every transaction is scored across features like location, amount, frequency, and behavioral biometrics before approval.",
+    response: "AegisAI uses three ML models in real-time: (1) Random Forest — pre-trained with 95% accuracy on 20 risk features, (2) Isolation Forest — unsupervised anomaly detection, (3) Autoencoder — deep learning reconstruction error. Every transaction is scored across features like location, amount, frequency, and behavioral biometrics before approval.",
     category: "AI & Fraud",
   },
   {
@@ -109,7 +109,7 @@ const HelpSupport = () => {
 
   // AI Chat
   const [messages, setMessages] = useState([
-    { role: "bot", text: "Hi! I'm SafePayAI Assistant. Ask me anything about fraud detection, transactions, or your account." }
+    { role: "bot", text: "Hi! I'm AegisAI Assistant. Ask me anything about fraud detection, transactions, or your account." }
   ])
   const [chatInput, setChatInput] = useState("")
   const [typing, setTyping] = useState(false)
@@ -252,7 +252,7 @@ const HelpSupport = () => {
                 </div>
                 <span className="text-xs text-gray-500 flex items-center gap-1">
                   <Sparkles className="h-3 w-3 text-purple-400" />
-                  Powered by SafePayAI
+                  Powered by AegisAI
                 </span>
               </div>
             </CardHeader>
@@ -319,7 +319,7 @@ const HelpSupport = () => {
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   onKeyDown={handleChatKeyDown}
-                  placeholder="Ask anything about SafePayAI…"
+                  placeholder="Ask anything about AegisAI…"
                   className="bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-500 h-10 focus:border-purple-500/60"
                   disabled={typing}
                 />

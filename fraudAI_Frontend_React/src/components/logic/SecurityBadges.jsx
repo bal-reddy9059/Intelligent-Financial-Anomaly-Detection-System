@@ -170,7 +170,7 @@ const BADGE_DEFS = [
   {
     id: "safepay_elite",
     emoji: "👑",
-    name: "SafePay Elite",
+    name: "Aegis Elite",
     description: "All other badges earned",
     xp: 100,
   },
@@ -283,7 +283,7 @@ function computeUnlocked(txData, sgData, rpData, userData, communityData, helpDa
   if (communityCount >= 5) unlocked.add("community_hero");
   if (helpData?.allArticlesRead) unlocked.add("educated");
 
-  // SafePay Elite: all others
+  // Aegis Elite: all others
   const nonElite = BADGE_DEFS.filter((b) => b.id !== "safepay_elite");
   if (nonElite.every((b) => unlocked.has(b.id))) unlocked.add("safepay_elite");
 
@@ -628,7 +628,7 @@ export default function SecurityBadges() {
                   <CardHeader>
                     <CardTitle className="text-white flex items-center gap-2">
                       <Users size={18} className="text-blue-400" />
-                      Top SafePay Users This Month
+                      Top AegisAI Users This Month
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -688,7 +688,7 @@ export default function SecurityBadges() {
                   <CardContent>
                     {recentActivity.length === 0 ? (
                       <p className="text-gray-500 text-sm">
-                        No recent badge activity. Keep using SafePayAI to earn
+                        No recent badge activity. Keep using AegisAI to earn
                         your first badge!
                       </p>
                     ) : (

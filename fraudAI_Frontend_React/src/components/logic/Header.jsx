@@ -144,7 +144,7 @@ const Header = ({ user }) => {
 
           <div className="flex items-center md:hidden">
             <CreditCard className="h-8 w-8 text-blue-400" />
-            <span className="ml-2 text-xl font-bold text-blue-400">SafePayAI</span>
+            <span className="ml-2 text-xl font-bold text-blue-400">AegisAI</span>
           </div>
         </div>
 

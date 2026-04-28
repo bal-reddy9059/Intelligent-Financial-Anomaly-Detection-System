@@ -290,7 +290,7 @@ export default function RecurringPayments() {
 
                     <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs rounded-lg px-3 py-2">
                       <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                      SafePayAI will simulate this payment on each scheduled date. Real UPI requires bank integration.
+                      AegisAI will simulate this payment on each scheduled date. Real UPI requires bank integration.
                     </div>
 
                     {formErr && <p className="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">{formErr}</p>}

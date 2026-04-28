@@ -61,8 +61,8 @@ export default function RequestMoney() {
   const handleShare = () => {
     if (navigator.share) {
       navigator.share({
-        title: "Pay me on SafePayAI",
-        text: `${user?.displayName || "Someone"} is requesting ₹${amount || "—"} via SafePayAI`,
+        title: "Pay me on AegisAI",
+        text: `${user?.displayName || "Someone"} is requesting ₹${amount || "—"} via AegisAI`,
         url: generatedLink,
       }).catch(() => {});
     } else {

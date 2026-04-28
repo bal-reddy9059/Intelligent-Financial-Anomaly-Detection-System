@@ -5858,7 +5858,7 @@ if __name__ == '__main__':
     debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
 
     print("\n" + "═" * 52)
-    print("  SafePayAI  —  AI Model Server")
+    print("  AegisAI  —  Neural Fraud Defense")
     print("═" * 52)
     print(f"  URL   : http://127.0.0.1:5000")
     print(f"  Model : RF loaded ✓")
