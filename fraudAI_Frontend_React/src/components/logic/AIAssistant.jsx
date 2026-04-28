@@ -2,25 +2,23 @@ import { useState, useEffect, useRef } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "./firebase";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
-import { motion } from "framer-motion";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { motion, AnimatePresence } from "framer-motion";
 import Header from "./Header";
 import SidebarContent from "./SidebarContent";
 import {
-  BotMessageSquare, Send, TrendingUp, ShieldAlert,
-  Wallet, AlertTriangle, BarChart2, RefreshCw, User, Sparkles,
+  Send, TrendingUp, ShieldAlert,
+  Wallet, AlertTriangle, BarChart2, RefreshCw, User,
+  Sparkles, ArrowRight,
 } from "lucide-react";
 
 // ── Quick actions ─────────────────────────────────────────────────────────────
 const QUICK_ACTIONS = [
-  { icon: TrendingUp,    label: "Spending summary",          q: "spending" },
-  { icon: ShieldAlert,   label: "Fraud risk",                q: "fraud" },
-  { icon: Wallet,        label: "Budget health",             q: "budget" },
-  { icon: AlertTriangle, label: "Suspicious transactions",   q: "suspicious" },
-  { icon: BarChart2,     label: "Top categories",            q: "categories" },
-  { icon: Sparkles,      label: "Financial advice",          q: "advice" },
+  { icon: TrendingUp,    label: "Spending summary",        q: "spending",     color: "from-blue-500 to-violet-500" },
+  { icon: ShieldAlert,   label: "Fraud risk",              q: "fraud",        color: "from-red-500 to-rose-500" },
+  { icon: Wallet,        label: "Budget health",           q: "budget",       color: "from-yellow-500 to-orange-500" },
+  { icon: AlertTriangle, label: "Suspicious transactions", q: "suspicious",   color: "from-orange-500 to-red-500" },
+  { icon: BarChart2,     label: "Top categories",          q: "categories",   color: "from-purple-500 to-pink-500" },
+  { icon: Sparkles,      label: "Financial advice",        q: "advice",       color: "from-emerald-500 to-teal-500" },
 ];
 
 // ── Load real user data from Firestore ────────────────────────────────────────
@@ -66,16 +64,13 @@ async function loadCtx(uid) {
   });
   const cats = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
 
-  // Unique recipients this month
-  const recipients = [...new Set(month.map(t => t.recipientUPI).filter(Boolean))];
+  const recipients    = [...new Set(month.map(t => t.recipientUPI).filter(Boolean))];
   const newRecipients = recipients.filter(r => !prev.some(t => t.recipientUPI === r));
 
-  // Avg daily spend
   const dayOfMonth = now.getDate();
   const dailyAvg   = dayOfMonth > 0 ? spent / dayOfMonth : 0;
   const projected  = dailyAvg * new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
-  // Civil score (simulated based on fraud flags and spending habits)
   let civilScore = 750;
   civilScore -= flagged.length * 15;
   civilScore -= recentFlag.length * 25;
@@ -104,12 +99,10 @@ function smartReply(input, ctx) {
   const monthName = new Date().toLocaleString("default", { month: "long" });
   const hi = name ? name.split(" ")[0] : "";
 
-  // ── Greeting ───────────────────────────────────────────────────────────────
   if (/^(hi|hello|hey|good\s*(morning|evening|afternoon)|namaste)/i.test(q)) {
     return `👋 Hello${hi ? ` ${hi}` : ""}! I'm your SafePayAI financial assistant.\n\nI can help you with:\n• 📊 Spending & transaction analysis\n• 🛡️ Fraud risk assessment\n• 💰 Budget tracking\n• 📈 Financial health & civil score\n• 💡 Personalized savings tips\n\nWhat would you like to know today?`;
   }
 
-  // ── Civil / Credit Score ───────────────────────────────────────────────────
   if (q.includes("civil") || q.includes("credit score") || q.includes("cibil") || q.includes("score")) {
     const level = civilScore >= 750 ? "Excellent 🟢" : civilScore >= 650 ? "Good 🟡" : civilScore >= 550 ? "Fair 🟠" : "Poor 🔴";
     return `📈 Your SafePayAI Financial Score: **${civilScore}/900** — ${level}\n\n` +
@@ -125,13 +118,11 @@ function smartReply(input, ctx) {
         : "⚠️ Your score needs attention. Review flagged transactions and reduce overspending.");
   }
 
-  // ── Balance ────────────────────────────────────────────────────────────────
   if (q.includes("balance") || q.includes("how much") && q.includes("have")) {
     const statusMsg = balance > 10000 ? "✅ Healthy balance." : balance > 3000 ? "⚠️ Moderate balance — monitor spending." : "🔴 Low balance — be careful with expenses.";
     return `💳 Your current account balance: **₹${balance.toLocaleString("en-IN")}**\n\n${statusMsg}\n\n• This month's spending: ₹${spent.toFixed(0)}\n• Remaining after spending: ₹${(balance - spent).toLocaleString("en-IN")}`;
   }
 
-  // ── Spending summary ───────────────────────────────────────────────────────
   if (q.includes("spend") || q.includes("summary") || q.includes("this month") || q === "spending") {
     const change = prevSpent > 0 ? (((spent - prevSpent) / prevSpent) * 100).toFixed(1) : null;
     const trend  = change === null ? "" : parseFloat(change) > 0 ? `📈 Up ${change}% from last month.` : `📉 Down ${Math.abs(change)}% from last month — great job!`;
@@ -146,7 +137,6 @@ function smartReply(input, ctx) {
       (projected > balance * 0.9 ? "\n\n⚠️ Warning: Projected spending may exceed 90% of your balance!" : "");
   }
 
-  // ── Fraud risk ─────────────────────────────────────────────────────────────
   if (q.includes("fraud") || q.includes("risk") || q.includes("safe") || q === "fraud") {
     const rate  = txns.length > 0 ? ((flagged.length / txns.length) * 100).toFixed(1) : 0;
     const risk  = flagged.length >= 3 || recentFlag.length >= 1 ? "HIGH 🔴" : flagged.length >= 1 ? "MEDIUM 🟡" : "LOW 🟢";
@@ -161,13 +151,12 @@ function smartReply(input, ctx) {
       `• New recipients this month: ${newRecipients.length}\n\n` +
       (flagged.length > 0 ? `Recent flagged transactions:\n${txDetails}\n\n` : "") +
       (risk.includes("HIGH")
-        ? "⚠️ High risk detected! Review flagged transactions immediately. Consider freezing your account if you didn't initiate them."
+        ? "⚠️ High risk detected! Review flagged transactions immediately."
         : risk.includes("MEDIUM")
         ? "💡 Some transactions raised AI flags. Review them in the Transactions page."
         : "✅ No significant fraud risk. Keep verifying new recipients before sending large amounts.");
   }
 
-  // ── Budget ─────────────────────────────────────────────────────────────────
   if (q.includes("budget") || q.includes("limit") || q === "budget") {
     if (Object.keys(budgets).length === 0) {
       return "📋 You haven't set any budget limits yet.\n\nGo to **Budget** in the sidebar to set monthly limits per category. I'll then track your spending vs limits in real time!";
@@ -186,7 +175,6 @@ function smartReply(input, ctx) {
         : "✅ All budgets on track! Great financial discipline.");
   }
 
-  // ── Suspicious transactions ────────────────────────────────────────────────
   if (q.includes("suspicious") || q.includes("flagged") || q.includes("alert") || q === "suspicious") {
     if (flagged.length === 0) return "✅ No suspicious transactions found! Your account looks clean and secure.";
     const list = flagged.slice(0, 5).map(tx => {
@@ -196,14 +184,12 @@ function smartReply(input, ctx) {
     return `🚨 **${flagged.length} Suspicious Transaction(s) Found:**\n\n${list}\n\n${flagged.length > 5 ? `...and ${flagged.length - 5} more.\n\n` : ""}Go to **Transactions** page to review and report any you didn't initiate.`;
   }
 
-  // ── Top categories ─────────────────────────────────────────────────────────
   if (q.includes("categor") || q.includes("top") || q.includes("where") || q === "categories") {
     if (cats.length === 0) return "📂 No transactions recorded this month yet. Make a payment and I'll analyze your spending!";
     const list = cats.slice(0, 6).map(([cat, amt], i) => `${i + 1}. ${cat}: ₹${amt.toFixed(0)} (${spent > 0 ? ((amt / spent) * 100).toFixed(0) : 0}%)`).join("\n");
     return `📂 **Top Spending Categories — ${monthName}:**\n\n${list}\n\nTotal: ₹${spent.toFixed(0)} across ${month.length} transactions.`;
   }
 
-  // ── Savings tips / advice ──────────────────────────────────────────────────
   if (q.includes("advice") || q.includes("tip") || q.includes("save") || q.includes("saving") || q.includes("suggest") || q === "advice") {
     const tips = [];
     if (spent > balance * 0.5) tips.push("💡 You've spent over 50% of balance — try the 50/30/20 rule: 50% needs, 30% wants, 20% savings.");
@@ -216,7 +202,6 @@ function smartReply(input, ctx) {
     return `💡 **Personalized Financial Advice:**\n\n${tips.join("\n")}\n\n📈 Your financial score: ${civilScore}/900`;
   }
 
-  // ── Recent transactions ────────────────────────────────────────────────────
   if (q.includes("recent") || q.includes("last") || q.includes("transaction") || q.includes("history") || q.includes("payment")) {
     if (txns.length === 0) return "📋 No transactions found yet. Make your first payment to get started!";
     const list = txns.slice(0, 5).map(tx => {
@@ -227,45 +212,62 @@ function smartReply(input, ctx) {
     return `📋 **Your Recent Transactions:**\n\n${list}\n\nTotal transactions on record: ${txns.length}`;
   }
 
-  // ── Projection ─────────────────────────────────────────────────────────────
   if (q.includes("project") || q.includes("end of month") || q.includes("forecast") || q.includes("predict")) {
     return `📈 **Month-End Projection:**\n\n• Current spending: ₹${spent.toFixed(0)}\n• Daily average: ₹${dailyAvg.toFixed(0)}/day\n• Projected month-end total: ₹${projected.toFixed(0)}\n• Current balance: ₹${balance.toLocaleString("en-IN")}\n\n${projected > balance ? "🔴 Warning: Projected spending exceeds balance!" : projected > balance * 0.8 ? "🟡 Caution: High projected spending." : "🟢 On track to finish the month within budget."}`;
   }
 
-  // ── Fallback ───────────────────────────────────────────────────────────────
   return `🤔 I can help you with:\n\n• 📊 "Show my spending summary"\n• 🛡️ "What's my fraud risk?"\n• 💰 "Check my budget"\n• 🚨 "Any suspicious transactions?"\n• 📂 "Top spending categories"\n• 📈 "What's my civil score?"\n• 💡 "Give me financial advice"\n• 💳 "What's my balance?"\n• 📋 "Show recent transactions"\n\nJust type your question naturally!`;
 }
 
-// ── UI Components ─────────────────────────────────────────────────────────────
+// ── Typing dots ───────────────────────────────────────────────────────────────
 function TypingDots() {
   return (
     <div className="flex items-center gap-1 px-4 py-3">
       {[0, 1, 2].map(i => (
-        <motion.div key={i} className="w-2 h-2 rounded-full bg-blue-400"
-          animate={{ y: [0, -6, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
+        <motion.div key={i} className="w-2 h-2 rounded-full bg-violet-400"
+          animate={{ y: [0, -6, 0] }}
+          transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
       ))}
     </div>
   );
 }
 
+// ── Chat bubble ───────────────────────────────────────────────────────────────
 function MessageBubble({ msg }) {
   const isUser = msg.role === "user";
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-      className={`flex items-end gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${isUser ? "bg-blue-600" : "bg-gradient-to-br from-purple-500 to-blue-600"}`}>
-        {isUser ? <User className="h-4 w-4 text-white" /> : <BotMessageSquare className="h-4 w-4 text-white" />}
-      </div>
-      <div className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${isUser ? "bg-blue-600 text-white rounded-br-sm" : "bg-gray-800 border border-gray-700 text-gray-200 rounded-bl-sm"}`}>
+    <motion.div
+      initial={{ opacity: 0, y: 12, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}
+    >
+      {!isUser && (
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-600 to-blue-600
+                        flex items-center justify-center flex-shrink-0 mt-0.5 shadow-lg">
+          <Sparkles className="h-4 w-4 text-white" />
+        </div>
+      )}
+      <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow whitespace-pre-line
+        ${isUser
+          ? "bg-gradient-to-br from-violet-600 to-blue-600 text-white rounded-br-sm"
+          : "bg-gray-800/80 border border-gray-700 text-gray-100 rounded-bl-sm"
+        }`}
+      >
         {msg.content}
       </div>
+      {isUser && (
+        <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center
+                        flex-shrink-0 mt-0.5 text-sm">
+          <User className="h-4 w-4 text-gray-300" />
+        </div>
+      )}
     </motion.div>
   );
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function AIAssistant() {
-  const [user, setUser]     = useState(null);
+  const [user, setUser]         = useState(null);
   const [messages, setMessages] = useState([{
     role: "ai",
     content: "👋 Hi! I'm your AI Financial Assistant.\n\nI analyse your real transactions, fraud risk, budgets, and give personalised advice — completely free, no API key needed.\n\nWhat would you like to know?",
@@ -297,55 +299,160 @@ export default function AIAssistant() {
     setLoading(false);
   };
 
+  const resetChat = () => {
+    setMessages([{
+      role: "ai",
+      content: "👋 Hi! I'm your AI Financial Assistant.\n\nI analyse your real transactions, fraud risk, budgets, and give personalised advice — completely free, no API key needed.\n\nWhat would you like to know?",
+    }]);
+    setInput("");
+  };
+
   return (
-    <div className="flex min-h-screen bg-gray-900 text-white">
-      <aside className="hidden md:flex flex-col w-72 min-h-screen border-r border-gray-800 bg-gray-900">
+    <div className="flex min-h-screen bg-[#0a0a0f] text-white">
+      <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 min-h-screen bg-gray-950 border-r border-gray-800/60">
         <SidebarContent />
       </aside>
-      <div className="flex-1 flex flex-col overflow-hidden">
+
+      <div className="flex-1 flex flex-col overflow-hidden" style={{ height: "100vh" }}>
         <Header user={user} />
-        <div className="flex-1 flex flex-col max-w-3xl w-full mx-auto px-4 pb-4 overflow-hidden">
 
-          <div className="py-4 flex-shrink-0">
-            <h1 className="text-xl font-bold text-blue-400 flex items-center gap-2">
-              <BotMessageSquare className="h-5 w-5" /> AI Financial Assistant
-            </h1>
-            <p className="text-xs text-gray-500 mt-0.5">Powered by your real transaction data · Free · No API key needed</p>
-          </div>
+        <div className="flex-1 flex overflow-hidden min-h-0">
 
-          <div className="flex-shrink-0 mb-3 flex gap-2 flex-wrap">
-            {QUICK_ACTIONS.map(a => (
-              <button key={a.q} onClick={() => send(a.q)} disabled={loading}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-gray-700 text-gray-400 hover:border-blue-500/50 hover:text-blue-400 hover:bg-blue-500/5 transition-colors disabled:opacity-40">
-                <a.icon className="h-3 w-3" />{a.label}
-              </button>
-            ))}
-          </div>
+          {/* ── Main chat area ── */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
 
-          <Card className="flex-1 bg-gray-800/50 border-gray-700 flex flex-col overflow-hidden">
-            <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)}
-              {loading && (
-                <div className="flex items-end gap-2">
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center flex-shrink-0">
-                    <BotMessageSquare className="h-4 w-4 text-white" />
-                  </div>
-                  <div className="bg-gray-800 border border-gray-700 rounded-2xl rounded-bl-sm"><TypingDots /></div>
+            {/* Page title */}
+            <div className="flex-shrink-0 px-6 pt-5 pb-3 flex items-center justify-between border-b border-gray-800/40">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-violet-600 to-blue-600
+                                flex items-center justify-center shadow-lg shadow-violet-500/30">
+                  <Sparkles className="h-5 w-5 text-white" />
                 </div>
+                <div>
+                  <h1 className="text-lg font-bold text-white leading-none">AI Financial Assistant</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">Powered by your real data · Free · No API key needed</p>
+                </div>
+              </div>
+              <button onClick={resetChat}
+                className="text-gray-500 hover:text-gray-300 p-1.5 rounded-lg hover:bg-gray-800 transition-colors">
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Quick action pills */}
+            <div className="flex-shrink-0 px-4 pt-3 pb-2 flex gap-2 flex-wrap border-b border-gray-800/40">
+              {QUICK_ACTIONS.map(a => (
+                <button key={a.q} onClick={() => send(a.q)} disabled={loading}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full
+                             border border-gray-700/60 text-gray-400
+                             hover:border-violet-500/50 hover:text-violet-300 hover:bg-violet-500/5
+                             transition-all disabled:opacity-40">
+                  <a.icon className="h-3 w-3" />
+                  {a.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Chat messages */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+              <AnimatePresence initial={false}>
+                {messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)}
+              </AnimatePresence>
+
+              {loading && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                  className="flex gap-3 justify-start"
+                >
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-600 to-blue-600
+                                  flex items-center justify-center flex-shrink-0 mt-0.5 shadow-lg">
+                    <Sparkles className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="bg-gray-800/80 border border-gray-700 rounded-2xl rounded-bl-sm">
+                    <TypingDots />
+                  </div>
+                </motion.div>
               )}
               <div ref={bottomRef} />
-            </CardContent>
-
-            <div className="flex-shrink-0 border-t border-gray-700 p-3 flex gap-2">
-              <Input value={input} onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && !loading && send(input)}
-                placeholder="Ask about your finances, fraud risk, spending…"
-                className="flex-1 bg-gray-700 border-gray-600 text-white placeholder-gray-500 text-sm" disabled={loading} />
-              <Button onClick={() => send(input)} disabled={loading || !input.trim()} className="bg-blue-600 hover:bg-blue-700 px-3">
-                {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
             </div>
-          </Card>
+
+            {/* Input bar */}
+            <div className="flex-shrink-0 px-4 pb-4 pt-2">
+              <div className="flex gap-2 bg-gray-900/80 border border-gray-700/60 rounded-2xl px-4 py-2
+                              focus-within:border-violet-500/50 transition-colors">
+                <input
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && !loading && send(input)}
+                  placeholder="Ask about your finances, fraud risk, spending…"
+                  disabled={loading}
+                  className="flex-1 bg-transparent text-sm text-white placeholder-gray-500
+                             outline-none disabled:opacity-50"
+                />
+                <button
+                  onClick={() => send(input)}
+                  disabled={loading || !input.trim()}
+                  className="flex-shrink-0 w-8 h-8 rounded-xl bg-gradient-to-br from-violet-600 to-blue-600
+                             flex items-center justify-center text-white
+                             hover:from-violet-500 hover:to-blue-500 transition-all
+                             disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {loading
+                    ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    : <Send className="h-3.5 w-3.5" />
+                  }
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Right panel ── */}
+          <div className="hidden xl:flex flex-col w-72 border-l border-gray-800/40 bg-gray-950/50 overflow-y-auto">
+
+            {/* Quick actions */}
+            <div className="p-4 border-b border-gray-800/40">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-yellow-400" /> Quick Queries
+              </p>
+              <div className="space-y-2">
+                {QUICK_ACTIONS.map((a, i) => (
+                  <motion.button key={i} whileHover={{ x: 3 }} onClick={() => send(a.q)} disabled={loading}
+                    className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 rounded-xl
+                               bg-gray-900/60 hover:bg-gray-800/80 border border-gray-800
+                               hover:border-gray-700 transition-all group disabled:opacity-40">
+                    <div className={`w-6 h-6 rounded-lg bg-gradient-to-br ${a.color}
+                                    flex items-center justify-center flex-shrink-0`}>
+                      <a.icon className="h-3 w-3 text-white" />
+                    </div>
+                    <p className="text-xs text-gray-400 group-hover:text-gray-200 transition-colors leading-relaxed flex-1">
+                      {a.label}
+                    </p>
+                    <ArrowRight className="h-3 w-3 text-gray-700 group-hover:text-violet-400 flex-shrink-0 transition-colors" />
+                  </motion.button>
+                ))}
+              </div>
+            </div>
+
+            {/* Hint cards */}
+            <div className="p-4 space-y-3">
+              <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-3">
+                <p className="text-[11px] text-violet-300 leading-relaxed">
+                  <strong className="text-violet-200">Real-time data:</strong> All answers are based on your actual Firestore transactions and account data — no mocks.
+                </p>
+              </div>
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3">
+                <p className="text-[11px] text-blue-300 leading-relaxed">
+                  Ask anything naturally: <em>"What did I spend on food?"</em>, <em>"Am I at risk of fraud?"</em>, <em>"How's my budget?"</em>
+                </p>
+              </div>
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
+                <p className="text-[11px] text-emerald-300 leading-relaxed">
+                  <strong className="text-emerald-200">100% free:</strong> Powered by a local AI engine — no OpenAI or external API charges.
+                </p>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>

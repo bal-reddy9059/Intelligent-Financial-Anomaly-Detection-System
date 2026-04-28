@@ -4,10 +4,12 @@ import { auth } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import SidebarContent from "./SidebarContent";
 import Header from "./Header";
+import PaymentAuthModal from "./PaymentAuthModal";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Mic, MicOff, Sparkles, ArrowRight, RefreshCw,
-         AlertTriangle, Zap } from "lucide-react";
+         AlertTriangle, Zap, CheckCircle2, Circle,
+         IndianRupee, User2, FileText, Wand2 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -57,18 +59,29 @@ const INTENT_META = {
   unknown:       { label: "Unknown",       color: "text-gray-400",    badge: "bg-gray-500/20 border-gray-500/40" },
 };
 
+// Stable random heights for waveform bars — generated once, never change
+const WAVEFORM_HEIGHTS = Array.from({ length: 18 }, () => Math.random() * 14 + 4);
+
 // ── Animated orb (GPT-4 voice style) ─────────────────────────────────────────
 function VoiceOrb({ state }) {
   // state: idle | listening | thinking | speaking
   const isActive = state !== "idle";
   return (
-    <div className="relative flex items-center justify-center w-44 h-44 mx-auto select-none">
-      {/* outer glow rings */}
+    <div className="relative flex items-center justify-center w-52 h-52 mx-auto select-none">
+      {/* subtle idle ring — always visible */}
+      <motion.div
+        className="absolute rounded-full border border-violet-500/10"
+        style={{ width: 200, height: 200 }}
+        animate={{ scale: [1, 1.03, 1], opacity: [0.3, 0.6, 0.3] }}
+        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {/* outer glow rings — active only */}
       {isActive && (
         <>
           <motion.div
             className="absolute rounded-full"
-            style={{ width: 176, height: 176, background: "radial-gradient(circle, rgba(139,92,246,0.4) 0%, transparent 70%)" }}
+            style={{ width: 200, height: 200, background: "radial-gradient(circle, rgba(139,92,246,0.4) 0%, transparent 70%)" }}
             animate={{ scale: [1, 1.18, 1], opacity: [0.15, 0.35, 0.15] }}
             transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
           />
@@ -76,15 +89,16 @@ function VoiceOrb({ state }) {
             className="absolute rounded-full"
             animate={{ scale: [1, 1.28, 1], opacity: [0.08, 0.20, 0.08] }}
             transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut", delay: 0.4 }}
-            style={{ width: 176, height: 176, background: "radial-gradient(circle, rgba(59,130,246,0.3) 0%, transparent 70%)" }}
+            style={{ width: 200, height: 200, background: "radial-gradient(circle, rgba(59,130,246,0.3) 0%, transparent 70%)" }}
           />
         </>
       )}
 
       {/* main orb */}
       <motion.button
+        type="button"
         whileTap={{ scale: 0.93 }}
-        className="relative w-28 h-28 rounded-full flex items-center justify-center cursor-pointer overflow-hidden shadow-2xl"
+        className="relative w-32 h-32 rounded-full flex items-center justify-center cursor-pointer overflow-hidden shadow-2xl"
         style={{
           background: state === "listening"
             ? "radial-gradient(circle at 35% 35%, #f43f5e, #be123c)"
@@ -112,7 +126,7 @@ function VoiceOrb({ state }) {
           style={{ background: "conic-gradient(from 0deg, transparent, rgba(255,255,255,0.2), transparent)" }}
         />
         {state === "listening" ? (
-          <MicOff className="h-10 w-10 text-white relative z-10" />
+          <MicOff className="h-12 w-12 text-white relative z-10" />
         ) : state === "thinking" ? (
           <motion.div
             className="relative z-10 flex gap-1"
@@ -120,13 +134,13 @@ function VoiceOrb({ state }) {
             transition={{ duration: 0.8, repeat: Infinity }}
           >
             {[0,1,2].map(i => (
-              <motion.div key={i} className="w-2 h-2 rounded-full bg-white"
-                animate={{ y: [0, -6, 0] }}
+              <motion.div key={i} className="w-2.5 h-2.5 rounded-full bg-white"
+                animate={{ y: [0, -8, 0] }}
                 transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
             ))}
           </motion.div>
         ) : (
-          <Mic className="h-10 w-10 text-white relative z-10" />
+          <Mic className="h-12 w-12 text-white relative z-10" />
         )}
       </motion.button>
 
@@ -136,13 +150,13 @@ function VoiceOrb({ state }) {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="absolute bottom-0 flex items-end justify-center gap-[3px]"
-            style={{ width: 120, height: 20 }}
+            style={{ width: 130, height: 22 }}
           >
-            {Array.from({ length: 18 }).map((_, i) => (
+            {WAVEFORM_HEIGHTS.map((h, i) => (
               <motion.div key={i}
                 className="w-1 rounded-full bg-rose-400"
-                animate={{ height: [3, Math.random()*14+4, 3] }}
-                transition={{ duration: 0.4 + Math.random()*0.3, repeat: Infinity, delay: i*0.04 }}
+                animate={{ height: [3, h, 3] }}
+                transition={{ duration: 0.4 + (i % 3) * 0.1, repeat: Infinity, delay: i * 0.04 }}
               />
             ))}
           </motion.div>
@@ -170,10 +184,10 @@ function Bubble({ msg }) {
         </div>
       )}
 
-      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow
+      <div className={`max-w-[85%] text-sm leading-relaxed shadow
         ${isUser
-          ? "bg-gradient-to-br from-violet-600 to-blue-600 text-white rounded-br-sm"
-          : "bg-gray-800/80 border border-gray-700 text-gray-100 rounded-bl-sm"
+          ? "bg-gradient-to-br from-violet-600 to-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3"
+          : "bg-gray-900/90 border border-gray-800 text-gray-100 rounded-2xl rounded-tl-sm px-4 py-3"
         }`}
       >
         {msg.content && <p>{msg.content}</p>}
@@ -282,7 +296,7 @@ function Bubble({ msg }) {
         {msg.action && !msg.form && (
           <button onClick={msg.action.fn}
             className="mt-2 w-full flex items-center justify-center gap-1.5 text-[12px] font-semibold
-                       bg-white/20 hover:bg-white/30 rounded-xl py-1.5 transition-colors">
+                       bg-violet-600 hover:bg-violet-500 text-white text-xs rounded-xl py-2 px-4 transition-colors">
             <Zap className="h-3 w-3" />
             {msg.action.label}
           </button>
@@ -299,6 +313,43 @@ function Bubble({ msg }) {
   );
 }
 
+// ── AI Understanding Slots row ────────────────────────────────────────────────
+function SlotPills({ slots }) {
+  const items = [
+    { key: "amount",    icon: <IndianRupee className="h-3 w-3" />, label: "Amount?",    value: slots.amount    ? `₹${Number(slots.amount).toLocaleString("en-IN")}` : null },
+    { key: "recipient", icon: <User2 className="h-3 w-3" />,       label: "Recipient?", value: slots.recipient || null },
+    { key: "reason",    icon: <FileText className="h-3 w-3" />,     label: "Reason?",   value: slots.reason    || null },
+  ];
+  return (
+    <div className="flex items-center justify-center gap-2 flex-wrap">
+      {items.map(item => (
+        <motion.div
+          key={item.key}
+          initial={{ opacity: 0, scale: 0.85 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs border transition-all
+            ${item.value
+              ? "bg-gray-900 border-violet-500/50 text-white"
+              : "bg-gray-900/50 border-gray-700 text-gray-600 border-dashed"
+            }`}
+        >
+          <span className={item.value ? "text-violet-400" : "text-gray-600"}>{item.icon}</span>
+          {item.value
+            ? (
+              <>
+                <span className="max-w-[100px] truncate">{item.value}</span>
+                <CheckCircle2 className="h-3 w-3 text-emerald-400 flex-shrink-0" />
+              </>
+            )
+            : <span>{item.label}</span>
+          }
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function VoicePayAssistant() {
   const navigate    = useNavigate();
@@ -310,15 +361,37 @@ export default function VoicePayAssistant() {
   ]);
   const [context, setContext]   = useState({});       // accumulated slots across turns
   const [supported, setSupported] = useState(true);
+  const [pendingPayment, setPendingPayment] = useState(null); // { amount, recipient, reason, url }
+
+  // ── New state ──────────────────────────────────────────────────────────────
+  const [detectedSlots, setDetectedSlots] = useState({ amount: null, recipient: null, reason: null });
+  const [activeIntent, setActiveIntent] = useState(null); // 'send_money'|'check_upi'|etc
+  const [listeningLevel, setListeningLevel] = useState(0); // 0-100, microphone volume simulation
+  const [guideText, setGuideText] = useState("Tap the orb and tell me what to do");
 
   const recognitionRef = useRef(null);
   const transcriptRef  = useRef("");
   const chatEndRef     = useRef(null);
+  const processRef     = useRef(null);
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
     if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) setSupported(false);
+  }, []);
+
+  // Update guideText when orbState changes
+  useEffect(() => {
+    if (orbState === "idle")      setGuideText("Tap the orb and tell me what to do");
+    if (orbState === "listening") setGuideText("I'm listening… speak clearly");
+    if (orbState === "thinking")  setGuideText("Understanding your request…");
+    if (orbState === "speaking")  setGuideText("Got it! Processing…");
+  }, [orbState]);
+
+  // ── Gate all send-money navigations behind the auth modal ────────────────
+  const openPayment = useCallback((amount, recipient, reason) => {
+    const url = `/send-money?amount=${amount || ""}&to=${encodeURIComponent(recipient || "")}&note=${encodeURIComponent(reason || "")}`;
+    setPendingPayment({ amount, recipient, reason, url });
   }, []);
 
   // ── NLP via Flask ─────────────────────────────────────────────────────────
@@ -473,7 +546,7 @@ export default function VoicePayAssistant() {
       case "send_money":
         return {
           label: "Open Send Money →",
-          fn: () => navigate(`/send-money?amount=${amount || ""}&to=${encodeURIComponent(recipient || "")}&note=${encodeURIComponent(reason || "")}`)
+          fn: () => openPayment(amount, recipient, reason)
         };
       case "check_upi":
       case "fraud_check":
@@ -503,14 +576,20 @@ export default function VoicePayAssistant() {
     if (CONFIRM_RE.test(text) && context.recipient?.includes('@') && context.amount) {
       const action = {
         label: "Open Send Money →",
-        fn: () => navigate(`/send-money?amount=${context.amount}&to=${encodeURIComponent(context.recipient)}&note=${encodeURIComponent(context.reason || '')}`)
+        fn: () => openPayment(context.amount, context.recipient, context.reason)
       };
       addMsg("assistant",
         `Confirmed! Sending ₹${Number(context.amount).toLocaleString('en-IN')} to ${context.recipient}${context.reason ? ` for ${context.reason}` : ''}. Opening now…`,
         { slots: { amount: context.amount, recipient: context.recipient, reason: context.reason }, action }
       );
       setOrbState("speaking");
-      setTimeout(() => { action.fn(); setOrbState("idle"); setContext({}); }, 1500);
+      setTimeout(() => {
+        setOrbState("idle");
+        action.fn();
+        setContext({});
+        setDetectedSlots({ amount: null, recipient: null, reason: null });
+        setActiveIntent(null);
+      }, 900);
       return;
     }
 
@@ -523,6 +602,8 @@ export default function VoicePayAssistant() {
       reason:    parsed.reason    || context.reason,
     };
     setContext(newCtx);
+    setDetectedSlots({ amount: newCtx.amount, recipient: newCtx.recipient, reason: newCtx.reason });
+    setActiveIntent(parsed.intent);
 
     // AI reply bubble — attach inline form when slots are missing
     const reply = parsed.reply || 'I didn\'t catch that. Try: "Send ₹500 to rajan@ybl for coffee"';
@@ -539,11 +620,11 @@ export default function VoicePayAssistant() {
         ? (upi) => {
             const merged = { ...newCtx, recipient: upi };
             setContext(merged);
-            const fn = () => navigate(`/send-money?amount=${merged.amount || ""}&to=${encodeURIComponent(upi)}&note=${encodeURIComponent(merged.reason || "")}`);
+            const fn = () => openPayment(merged.amount, upi, merged.reason);
             addMsg("assistant",
-              `Got it! Sending ₹${Number(merged.amount || 0).toLocaleString("en-IN")} to ${upi}${merged.reason ? ` for ${merged.reason}` : ""}. Opening now…`,
+              `Got it! Sending ₹${Number(merged.amount || 0).toLocaleString("en-IN")} to ${upi}${merged.reason ? ` for ${merged.reason}` : ""}. Verify to proceed…`,
               { slots: { amount: merged.amount, recipient: upi, reason: merged.reason },
-                action: { label: "Open Send Money →", fn } }
+                action: { label: "Verify & Send →", fn } }
             );
             setTimeout(() => { fn(); setContext({}); }, 1400);
           }
@@ -559,10 +640,16 @@ export default function VoicePayAssistant() {
         : undefined,
     });
 
-    // Auto-navigate if all slots filled — clear context so old slots don't bleed
+    // Open auth modal if all slots filled — clear context so old slots don't bleed
     if (action && parsed.intent === "send_money" && !parsed.missing?.length) {
       setOrbState("speaking");
-      setTimeout(() => { action.fn(); setOrbState("idle"); setContext({}); }, 1800);
+      setTimeout(() => {
+        setOrbState("idle");
+        action.fn();
+        setContext({});
+        setDetectedSlots({ amount: null, recipient: null, reason: null });
+        setActiveIntent(null);
+      }, 900);
     } else {
       setOrbState("speaking");
       setTimeout(() => setOrbState("idle"), 1200);
@@ -572,6 +659,10 @@ export default function VoicePayAssistant() {
   function addMsg(role, content, extra = {}) {
     setMessages(prev => [...prev, { id: Date.now(), role, content, ...extra }]);
   }
+
+  // Always keep the ref pointing at the latest process function
+  // so rec.onend doesn't capture a stale closure
+  processRef.current = process;
 
   // ── Speech recognition ────────────────────────────────────────────────────
   function startListening() {
@@ -593,7 +684,7 @@ export default function VoicePayAssistant() {
       if (final) { transcriptRef.current = final; setTranscript(final); }
       else        setTranscript(interim);
     };
-    rec.onend  = () => process(transcriptRef.current);
+    rec.onend  = () => processRef.current(transcriptRef.current);
     rec.onerror = (e) => {
       setOrbState("idle");
       addMsg("assistant", e.error === "not-allowed"
@@ -616,26 +707,31 @@ export default function VoicePayAssistant() {
     setContext({});
     setTranscript("");
     setOrbState("idle");
+    setDetectedSlots({ amount: null, recipient: null, reason: null });
+    setActiveIntent(null);
+    setGuideText("Tap the orb and tell me what to do");
   }
 
-  const orbLabel = { idle: "Tap to speak", listening: "Listening… tap to stop", thinking: "Thinking…", speaking: "Speaking…" };
+  const hasAnySlot = detectedSlots.amount || detectedSlots.recipient || detectedSlots.reason;
+  const showAmountChips = activeIntent === "send_money" && !detectedSlots.amount;
+  const showExampleCards = orbState === "idle" && messages.length <= 1;
 
   return (
-    <div className="flex h-screen bg-[#0a0a0f] text-white overflow-hidden">
-      <div className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-gray-950 border-r border-gray-800/60">
+    <div className="flex min-h-screen bg-[#0a0a0f] text-white">
+      <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 min-h-screen bg-gray-950 border-r border-gray-800/60">
         <SidebarContent />
-      </div>
+      </aside>
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden" style={{ height: '100vh' }}>
         <Header user={user} />
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden min-h-0">
 
-          {/* ── Left: orb + chat ── */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          {/* ── Left: orb + hero + chat ── */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
 
-            {/* Page title */}
-            <div className="px-6 pt-5 pb-3 flex items-center justify-between border-b border-gray-800/40">
+            {/* Title bar */}
+            <div className="flex-shrink-0 px-6 pt-5 pb-3 flex items-center justify-between border-b border-gray-800/40">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-violet-600 to-blue-600
                                 flex items-center justify-center shadow-lg shadow-violet-500/30">
@@ -652,19 +748,29 @@ export default function VoicePayAssistant() {
               </button>
             </div>
 
-            {/* Orb */}
+            {/* Hero section */}
             <div
-              className="pt-6 pb-2 flex flex-col items-center gap-3 cursor-pointer"
+              className="flex-shrink-0 py-6 flex flex-col items-center gap-4 cursor-pointer"
               onClick={orbState === "listening" ? stopListening : (orbState === "idle" ? startListening : undefined)}
             >
+              {/* The Orb */}
               <VoiceOrb state={orbState} />
+
+              {/* Animated guide text */}
               <motion.p
-                key={orbState}
+                key={guideText}
                 initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                className={`text-sm font-medium ${orbState === "idle" ? "text-gray-500" : orbState === "listening" ? "text-rose-400" : orbState === "thinking" ? "text-amber-400" : "text-emerald-400"}`}
+                className={`text-sm font-medium ${
+                  orbState === "idle"      ? "text-gray-500"   :
+                  orbState === "listening" ? "text-rose-400"   :
+                  orbState === "thinking"  ? "text-amber-400"  :
+                                            "text-emerald-400"
+                }`}
               >
-                {orbLabel[orbState]}
+                {guideText}
               </motion.p>
+
+              {/* Live transcript pill */}
               {transcript && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
@@ -676,13 +782,81 @@ export default function VoicePayAssistant() {
                 </motion.div>
               )}
 
+              {/* Unsupported warning */}
               {!supported && (
                 <div className="mx-6 flex items-center gap-2 bg-red-500/10 border border-red-500/30
-                                rounded-xl px-4 py-2.5 text-sm text-red-300">
+                                rounded-full px-4 py-2.5 text-sm text-red-300">
                   <AlertTriangle className="h-4 w-4 flex-shrink-0" />
                   Browser doesn't support Web Speech API. Use Chrome or Edge.
                 </div>
               )}
+
+              {/* AI Understanding Slots */}
+              <AnimatePresence>
+                {hasAnySlot && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+                    className="w-full px-4"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <p className="text-center text-[10px] text-gray-600 uppercase tracking-wider mb-2 flex items-center justify-center gap-1">
+                      <Wand2 className="h-3 w-3" /> AI understood
+                    </p>
+                    <SlotPills slots={detectedSlots} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Quick amount chips */}
+              <AnimatePresence>
+                {showAmountChips && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                    className="flex items-center gap-2 flex-wrap justify-center px-4"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <span className="text-[10px] text-gray-600 uppercase tracking-wider mr-1">Quick amount:</span>
+                    {["100","500","1000","2000","5000"].map(v => (
+                      <button key={v}
+                        onClick={() => tryExample(`₹${v}`)}
+                        className="text-xs bg-gray-900 border border-gray-700 hover:border-violet-500/50
+                                   hover:text-violet-300 rounded-full px-3 py-1 transition-all text-gray-400">
+                        ₹{Number(v).toLocaleString("en-IN")}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Smart example cards */}
+              <AnimatePresence>
+                {showExampleCards && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                    className="w-full px-4 flex gap-2 overflow-x-auto pb-1 scrollbar-hide"
+                    style={{ scrollbarWidth: "none" }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {[
+                      { icon: "💸", label: "Send ₹500 to rajan4821@ybl", text: "Send ₹500 to rajan4821@ybl for coffee" },
+                      { icon: "✅", label: "Check alice@paytm",           text: "Check if alice@paytm is safe" },
+                      { icon: "💰", label: "My balance",                  text: "What is my balance?" },
+                    ].map((card, i) => (
+                      <motion.button key={i}
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => tryExample(card.text)}
+                        className="flex-shrink-0 flex items-center gap-2 bg-gray-900/80 border border-gray-800
+                                   hover:border-violet-500/40 rounded-2xl px-3 py-2 text-xs text-gray-400
+                                   hover:text-gray-200 transition-all"
+                      >
+                        <span>{card.icon}</span>
+                        <span>{card.label}</span>
+                      </motion.button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Chat history */}
@@ -697,10 +871,10 @@ export default function VoicePayAssistant() {
           {/* ── Right panel ── */}
           <div className="hidden xl:flex flex-col w-72 border-l border-gray-800/40 bg-gray-950/50 overflow-y-auto">
 
-            {/* Try These Commands */}
+            {/* Section 1: Quick Pay */}
             <div className="p-4 border-b border-gray-800/40">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-yellow-400" /> Try These Commands
+                <Zap className="h-3.5 w-3.5 text-yellow-400" /> Quick Pay
               </p>
               <div className="space-y-2">
                 {EXAMPLES.map((ex, i) => (
@@ -718,39 +892,82 @@ export default function VoicePayAssistant() {
               </div>
             </div>
 
-            {/* Supported Intents */}
-            <div className="p-4 border-b border-gray-800/40">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Supported Intents
+            {/* Section 2: Payment Builder / AI Understanding */}
+            <div className="p-4 border-t border-gray-800/40">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Wand2 className="h-3.5 w-3.5 text-violet-400" /> AI Understanding
               </p>
               <div className="space-y-2">
-                {Object.entries(INTENT_META).filter(([k]) => k !== "unknown").map(([key, meta]) => (
-                  <div key={key} className="flex items-center gap-2.5">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.badge} ${meta.color}`}>
-                      {meta.label}
-                    </span>
+                {[
+                  { icon: <IndianRupee className="h-3.5 w-3.5" />, label: "Amount",    value: detectedSlots.amount    ? `₹${Number(detectedSlots.amount).toLocaleString("en-IN")}` : null },
+                  { icon: <User2 className="h-3.5 w-3.5" />,       label: "Recipient", value: detectedSlots.recipient || null },
+                  { icon: <FileText className="h-3.5 w-3.5" />,     label: "Reason",   value: detectedSlots.reason    || null },
+                ].map(item => (
+                  <div key={item.label} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-gray-500 text-xs">
+                      <span className={item.value ? "text-violet-400" : "text-gray-600"}>{item.icon}</span>
+                      {item.label}
+                    </div>
+                    {item.value
+                      ? (
+                        <div className="flex items-center gap-1 text-xs text-emerald-300 max-w-[130px]">
+                          <CheckCircle2 className="h-3 w-3 text-emerald-400 flex-shrink-0" />
+                          <span className="truncate">{item.value}</span>
+                        </div>
+                      )
+                      : <span className="text-[11px] text-gray-600">Not detected</span>
+                    }
                   </div>
                 ))}
               </div>
+              {activeIntent && INTENT_META[activeIntent] && (
+                <div className="mt-3">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${INTENT_META[activeIntent].badge} ${INTENT_META[activeIntent].color}`}>
+                    {INTENT_META[activeIntent].label}
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* Multi-turn hint */}
-            <div className="p-4">
+            {/* Section 3: Hints */}
+            <div className="p-4 border-t border-gray-800/40 space-y-3">
               <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-3">
                 <p className="text-[11px] text-violet-300 leading-relaxed">
                   <strong className="text-violet-200">Multi-turn context:</strong> If I ask "how much?", just say the amount next — I remember what you said before.
                 </p>
               </div>
-              <div className="mt-3 bg-blue-500/10 border border-blue-500/20 rounded-xl p-3">
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3">
                 <p className="text-[11px] text-blue-300 leading-relaxed">
                   Speak in <strong className="text-blue-200">English or Hinglish</strong>. Supports ₹, rupees, rs, and UPI formats like <em>name@bank</em>.
                 </p>
               </div>
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
+                <p className="text-[11px] text-emerald-300 leading-relaxed">
+                  <strong className="text-emerald-200">Payment secured:</strong> Every send-money is verified with PIN, Pattern or Fingerprint before processing.
+                </p>
+              </div>
             </div>
+
           </div>
 
         </div>
       </div>
+
+      {/* ── Payment auth modal ── */}
+      {pendingPayment && (
+        <PaymentAuthModal
+          payment={pendingPayment}
+          onConfirm={() => {
+            const url = pendingPayment.url;
+            setPendingPayment(null);
+            navigate(url);
+          }}
+          onCancel={() => {
+            setPendingPayment(null);
+            addMsg("assistant", "Payment cancelled. Tap the orb to try again.");
+          }}
+        />
+      )}
     </div>
   );
 }

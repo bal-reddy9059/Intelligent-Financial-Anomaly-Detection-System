@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, Bell, CreditCard, Menu, Wifi, WifiOff, ShieldAlert, CheckCircle, Clock, X } from "lucide-react";
+import { Search, Bell, CreditCard, Menu, Wifi, WifiOff, ShieldAlert, CheckCircle, Clock, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -10,6 +10,7 @@ import { auth, db } from "./firebase";
 import { collection, query, where, getDocs, updateDoc, doc, orderBy, limit } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate, useLocation } from "react-router-dom";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -25,12 +26,16 @@ const NOTIF_COLOR = {
 };
 
 const Header = ({ user }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [apiOnline, setApiOnline] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifs, setShowNotifs] = useState(false);
   const bellRef = useRef(null);
   const dropdownRef = useRef(null);
+
+  const showBack = location.pathname !== "/dashboard";
 
   // API status
   useEffect(() => {
@@ -115,10 +120,10 @@ const Header = ({ user }) => {
   return (
     <header className="sticky top-0 z-10 backdrop-blur-xl bg-black/20 border-b border-white/10">
       <div className="flex items-center justify-between px-6 py-4">
-        <div className="flex items-center">
+        <div className="flex items-center gap-2">
           <Sheet>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="md:hidden mr-2">
+              <Button variant="ghost" size="icon" className="md:hidden">
                 <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>
@@ -126,6 +131,17 @@ const Header = ({ user }) => {
               <SidebarContent />
             </SheetContent>
           </Sheet>
+
+          {showBack && (
+            <button
+              onClick={() => navigate(-1)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white/60 hover:text-white hover:bg-white/10 transition-all text-sm font-medium group"
+            >
+              <ArrowLeft className="h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
+              <span className="hidden sm:inline">Back</span>
+            </button>
+          )}
+
           <div className="flex items-center md:hidden">
             <CreditCard className="h-8 w-8 text-blue-400" />
             <span className="ml-2 text-xl font-bold text-blue-400">SafePayAI</span>

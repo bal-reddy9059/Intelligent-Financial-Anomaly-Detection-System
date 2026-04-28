@@ -21,6 +21,13 @@ export default defineConfig({
     include: ['path-browserify', 'url', 'source-map-js'], // Include the browser-compatible versions for Vite to handle
   },
   build: {
-    sourcemap: false, // Optionally disable source maps for production if not needed
+    outDir: '../AI_model_server_Flask/static',
+    emptyOutDir: true,
+    sourcemap: false,
+  },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:5000',
+    },
   },
 })

@@ -17,6 +17,7 @@ node_modules/
 dist/
 build/
 *.egg-info/
+AI_model_server_Flask/static/
 
 # IDE
 .vscode/

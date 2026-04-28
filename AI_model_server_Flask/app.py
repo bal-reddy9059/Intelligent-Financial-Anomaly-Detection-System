@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify
+import os
+from flask import Flask, request, jsonify, send_from_directory
 import pickle
 import numpy as np
 import pandas as pd
@@ -15,7 +16,7 @@ from sklearn.metrics import (
 import warnings
 warnings.filterwarnings('ignore')
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
 # ── Model Loading ──────────────────────────────────────────────────────────────
@@ -336,55 +337,13 @@ def _detection_narrative(results_dict, total_rows, label_col_exists):
 
 # ─── Health / Status ─────────────────────────────────────────────────────────
 
-@app.route('/')
-def home():
-    return jsonify({
-        "service": "SafePayAI Fraud Detection API",
-        "version": "2.0",
-        "status": "running",
-        "uptime_since": SERVER_START,
-        "models_loaded": {
-            "random_forest": True,
-            "isolation_forest": state["if_model"] is not None,
-            "autoencoder": state["ae_model"] is not None,
-        },
-        "dataset_loaded": state["df"] is not None,
-        "endpoints": [
-            "POST /predict           — Single transaction check (RF model, fast)",
-            "POST /check-single      — Enriched AI check (all models + explanation)",
-            "POST /batch-check       — Check up to 50 transactions at once",
-            "POST /upload            — Upload CSV dataset",
-            "GET  /explore           — Dataset statistics & AI insights",
-            "POST /detect            — Run bulk anomaly detection",
-            "GET  /ai-summary        — Post-detection AI narrative report",
-            "GET  /explain/<index>   — Explain a specific transaction from dataset",
-            "POST /bulk-explain      — Batch explanations for multiple feature vectors",
-            "GET  /risk-profile      — Risk percentile profile for given features",
-            "GET  /features          — List loaded feature columns",
-            "GET  /results           — Last detection results",
-            "GET  /health            — Detailed system health",
-            "GET  /score-history     — Audit log of all API-scored transactions",
-            "GET  /watchlist         — Top-N highest risk transactions from dataset",
-            "POST /rule-engine       — Apply custom rule-based fraud checks",
-            "GET  /export-results    — Export last detection results as CSV",
-            "POST /feedback          — Submit human label correction for a transaction",
-            "GET  /feedback-stats    — Statistics on human feedback corrections",
-            "GET  /model-comparison  — Side-by-side model performance metrics",
-            "POST /velocity-check   — UPI velocity fraud: rapid multi-transaction detection",
-            "POST /amount-pattern   — Suspicious amount patterns (structuring, limit-probing)",
-            "POST /account-takeover — Account takeover risk scoring (device+location+behaviour)",
-            "POST /recipient-trust  — Recipient UPI ID trust score from transaction history",
-            "POST /spending-pattern — Personal spending baseline deviation analysis",
-            "GET  /network-analysis — Money mule / circular fund-flow detection in dataset",
-            "POST /transaction-purpose — AI transaction purpose classifier (P2P/merchant/bill/suspicious)",
-            "POST /geo-velocity      — Impossible travel / geo-velocity fraud detection",
-            "POST /risk-score-blend  — Unified composite risk score combining all available signals",
-            "GET  /fraud-calendar    — Hour/day fraud heatmap from dataset for scheduling rules",
-            "POST /device-risk       — Device fingerprint trust scoring (rooted/emulator/new install)",
-            "GET  /dataset-drift     — Feature distribution drift vs RF training baseline",
-            "POST /retraining-readiness — Model health check and retraining recommendation",
-        ]
-    })
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_react(path):
+    static_dir = app.static_folder
+    if path and os.path.exists(os.path.join(static_dir, path)):
+        return send_from_directory(static_dir, path)
+    return send_from_directory(static_dir, 'index.html')
 
 
 @app.route('/health', methods=['GET'])
@@ -5889,7 +5848,6 @@ def prepayment_check():
 
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == '__main__':
-    import os
     import logging
     import flask.cli
 
