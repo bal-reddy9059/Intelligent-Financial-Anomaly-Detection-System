@@ -1,5 +1,7 @@
 import os
 from flask import Flask, request, jsonify, send_from_directory
+from flasgger import Swagger
+from swagger_docs import SWAGGER_TEMPLATE, SWAGGER_CONFIG
 import pickle
 import numpy as np
 import pandas as pd
@@ -18,6 +20,7 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
+Swagger(app, template=SWAGGER_TEMPLATE, config=SWAGGER_CONFIG)
 
 # ── Model Loading ──────────────────────────────────────────────────────────────
 model_path = "best_rf_model (1).pkl"
@@ -6232,7 +6235,8 @@ if __name__ == '__main__':
     print("\n" + "═" * 52)
     print("  AegisAI  —  Neural Fraud Defense")
     print("═" * 52)
-    print(f"  URL   : http://127.0.0.1:5000")
+    print(f"  App   : http://127.0.0.1:5000")
+    print(f"  Docs  : http://127.0.0.1:5000/apidocs/")
     print(f"  Model : RF loaded ✓")
     print(f"  Debug : {'ON  ⚠' if debug_mode else 'OFF ✓'}")
     print("  Ready : Listening for requests...")
