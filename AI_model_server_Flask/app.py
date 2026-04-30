@@ -6221,6 +6221,206 @@ def phone_pay_history():
         }), 500
 
 
+# ── Razorpay Payment Integration ──────────────────────────────────────────────
+
+def _razorpay_client():
+    """Return an authenticated Razorpay client using .env credentials."""
+    from dotenv import load_dotenv
+    import razorpay
+    load_dotenv()
+    key_id     = os.environ.get('RAZORPAY_KEY_ID', '')
+    key_secret = os.environ.get('RAZORPAY_KEY_SECRET', '')
+    if not key_id or not key_secret or 'YOUR_KEY' in key_secret:
+        raise ValueError("Razorpay credentials not configured in .env")
+    return razorpay.Client(auth=(key_id, key_secret))
+
+
+@app.route('/razorpay/create-order', methods=['POST'])
+def razorpay_create_order():
+    """
+    Create a Razorpay order server-side before opening the checkout modal.
+    Amount is in INR — converted to paise internally (×100).
+    """
+    try:
+        data          = request.get_json(silent=True) or {}
+        amount        = float(data.get('amount', 0))
+        currency      = data.get('currency', 'INR')
+        recipient_upi = data.get('recipientUpi', '')
+        recipient_name= data.get('recipientName', 'Recipient')
+        note          = data.get('note', 'AegisAI Payment')
+        sender_uid    = data.get('senderUid', '')
+
+        if amount <= 0:
+            return jsonify({"error": "amount must be greater than 0"}), 400
+        if not recipient_upi:
+            return jsonify({"error": "recipientUpi is required"}), 400
+
+        client = _razorpay_client()
+
+        order_data = {
+            "amount":   int(amount * 100),   # paise
+            "currency": currency,
+            "receipt":  f"aegis_{sender_uid[:8]}_{int(time.time())}",
+            "notes": {
+                "recipient_upi":  recipient_upi,
+                "recipient_name": recipient_name,
+                "payment_note":   note,
+                "sender_uid":     sender_uid,
+                "platform":       "AegisAI",
+            },
+        }
+
+        order = client.order.create(data=order_data)
+
+        from dotenv import load_dotenv
+        load_dotenv()
+
+        return jsonify({
+            "order_id":    order['id'],
+            "amount":      order['amount'],
+            "currency":    order['currency'],
+            "razorpay_key": os.environ.get('RAZORPAY_KEY_ID', ''),
+            "receipt":     order['receipt'],
+            "status":      order['status'],
+        }), 200
+
+    except ValueError as ve:
+        return jsonify({"error": str(ve), "setup_required": True}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/razorpay/verify-payment', methods=['POST'])
+def razorpay_verify_payment():
+    """
+    Verify Razorpay payment signature (HMAC-SHA256).
+    Must be called immediately after the Razorpay checkout modal succeeds.
+    Records the verified payment in score history.
+    """
+    try:
+        import hmac, hashlib
+
+        data            = request.get_json(silent=True) or {}
+        order_id        = data.get('razorpay_order_id', '')
+        payment_id      = data.get('razorpay_payment_id', '')
+        signature       = data.get('razorpay_signature', '')
+        amount          = float(data.get('amount', 0))
+        recipient_upi   = data.get('recipientUpi', '')
+        sender_uid      = data.get('senderUid', '')
+
+        if not all([order_id, payment_id, signature]):
+            return jsonify({"error": "order_id, payment_id, and signature are required"}), 400
+
+        from dotenv import load_dotenv
+        load_dotenv()
+        key_secret = os.environ.get('RAZORPAY_KEY_SECRET', '')
+        if not key_secret or 'YOUR_KEY' in key_secret:
+            return jsonify({"error": "Razorpay secret not configured", "setup_required": True}), 503
+
+        # HMAC-SHA256 verification
+        message  = f"{order_id}|{payment_id}".encode()
+        expected = hmac.new(key_secret.encode(), message, hashlib.sha256).hexdigest()
+
+        if not hmac.compare_digest(expected, signature):
+            return jsonify({
+                "verified": False,
+                "error":    "Payment signature mismatch — possible tampering detected",
+            }), 400
+
+        # Log to score history
+        _log_score(
+            tx_id   = payment_id,
+            verdict = "LEGITIMATE",
+            prob    = 0.0,
+            risk    = "LOW",
+            source  = "razorpay_verified",
+            top_feats = [f"order:{order_id}", f"upi:{recipient_upi}"],
+        )
+
+        return jsonify({
+            "verified":        True,
+            "payment_id":      payment_id,
+            "order_id":        order_id,
+            "amount_inr":      amount,
+            "recipient_upi":   recipient_upi,
+            "message":         "Payment verified and recorded by AegisAI",
+            "aegis_status":    "CLEARED",
+            "timestamp":       datetime.utcnow().isoformat() + "Z",
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/razorpay/payment-status/<payment_id>', methods=['GET'])
+def razorpay_payment_status(payment_id):
+    """
+    Fetch live payment status from Razorpay by payment ID.
+    Use this to poll status after checkout completes.
+    """
+    try:
+        client  = _razorpay_client()
+        payment = client.payment.fetch(payment_id)
+        return jsonify({
+            "payment_id":  payment['id'],
+            "order_id":    payment.get('order_id'),
+            "status":      payment['status'],          # created/authorized/captured/failed
+            "amount_inr":  payment['amount'] / 100,
+            "currency":    payment['currency'],
+            "method":      payment.get('method'),      # upi/card/netbanking
+            "email":       payment.get('email'),
+            "contact":     payment.get('contact'),
+            "description": payment.get('description'),
+            "created_at":  payment.get('created_at'),
+        }), 200
+
+    except ValueError as ve:
+        return jsonify({"error": str(ve), "setup_required": True}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/razorpay/webhook', methods=['POST'])
+def razorpay_webhook():
+    """
+    Razorpay webhook handler.
+    Configure in Razorpay Dashboard → Webhooks → URL: /razorpay/webhook
+    Events: payment.captured, payment.failed
+    """
+    try:
+        import hmac, hashlib
+
+        from dotenv import load_dotenv
+        load_dotenv()
+        webhook_secret = os.environ.get('RAZORPAY_WEBHOOK_SECRET', '')
+
+        # Verify webhook signature if secret is configured
+        if webhook_secret:
+            received_sig = request.headers.get('X-Razorpay-Signature', '')
+            body         = request.get_data()
+            expected     = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, received_sig):
+                return jsonify({"error": "Invalid webhook signature"}), 400
+
+        payload = request.get_json(silent=True) or {}
+        event   = payload.get('event', '')
+        entity  = payload.get('payload', {}).get('payment', {}).get('entity', {})
+
+        payment_id = entity.get('id', '')
+        amount_inr = entity.get('amount', 0) / 100
+        status     = entity.get('status', '')
+
+        if event == 'payment.captured':
+            _log_score(payment_id, "LEGITIMATE", 0.0, "LOW", "razorpay_webhook", [f"captured:₹{amount_inr}"])
+        elif event == 'payment.failed':
+            _log_score(payment_id, "FAILED", 1.0, "HIGH", "razorpay_webhook", [f"failed:₹{amount_inr}"])
+
+        return jsonify({"status": "webhook_received", "event": event}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == '__main__':
     import logging

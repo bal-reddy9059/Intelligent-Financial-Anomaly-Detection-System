@@ -1,6 +1,8 @@
 flask
 flask-cors
 flasgger
+razorpay
+python-dotenv
 numpy
 pandas
 scikit-learn

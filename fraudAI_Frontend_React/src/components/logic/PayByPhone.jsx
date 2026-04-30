@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from './firebase';
-import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Phone, DollarSign, MessageSquare, Send,
-  Shield, AlertTriangle, CheckCircle,
+  Phone, DollarSign, MessageSquare,
+  AlertTriangle, CheckCircle,
   TrendingUp, History, AlertCircle, ShieldAlert, Eye, Loader, Info
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Header from './Header';
 import SidebarContent from './SidebarContent';
+import RazorpayCheckout from './RazorpayCheckout';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -45,7 +46,6 @@ export default function PayByPhone() {
   const [paymentHistory, setPaymentHistory]   = useState(MOCK_HISTORY);
   const [historyLoading, setHistoryLoading]   = useState(false);
 
-  const [confirmMode, setConfirmMode]         = useState(false);
   const [paymentSuccess, setPaymentSuccess]   = useState(false);
   const [successTx, setSuccessTx]             = useState(null);
   const [error, setError]                     = useState('');
@@ -161,37 +161,6 @@ export default function PayByPhone() {
     if (recipient && amount) performFraudCheck(recipient, parseFloat(amount));
   }, [amount]);
 
-  const handlePayment = async () => {
-    if (!recipient || !amount || parseFloat(amount) <= 0) { setError('Please fill in all fields'); return; }
-    if (fraudVerdict?.verdict === 'BLOCK') { setError('Transaction blocked due to high fraud risk.'); return; }
-    setConfirmMode(false);
-    try {
-      if (user && db) {
-        await addDoc(collection(db, 'transactions'), {
-          userId: user.uid,
-          senderUPI: upiId,
-          receiverUPI: recipient.upiId,
-          receiverPhone: recipient.phoneNumber,
-          recipientName: recipient.displayName,
-          amount: parseFloat(amount),
-          note,
-          paymentMethod: 'phone',
-          timestamp: new Date(),
-          status: 'completed',
-          fraudVerdict: fraudVerdict?.verdict || 'UNKNOWN',
-          fraudScore: fraudVerdict?.compositeRisk || 0,
-        });
-      }
-    } catch { /* demo mode */ }
-    setSuccessTx({ amount: parseFloat(amount), recipient: recipient.displayName, upi: recipient.upiId });
-    setPaymentSuccess(true);
-    setError('');
-    setTimeout(() => {
-      setPhoneInput('+91'); setAmount(''); setNote('');
-      setRecipient(null); setFraudVerdict(null);
-      setPaymentSuccess(false); setSuccessTx(null);
-    }, 3500);
-  };
 
   const trustColor = (badge) =>
     badge === 'verified' ? 'bg-green-900 text-green-100 border-green-700'
@@ -377,59 +346,35 @@ export default function PayByPhone() {
                     </div>
                   )}
 
-                  {/* Confirm / Send */}
-                  {confirmMode ? (
-                    <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
-                      className="bg-blue-900/20 border border-blue-600/40 rounded-lg p-4 space-y-4">
-                      <p className="text-white font-bold text-sm flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-blue-400" /> Confirm Payment
+                  {/* ── Razorpay Payment ── */}
+                  {fraudVerdict?.verdict === 'BLOCK' ? (
+                    <div className="w-full p-4 bg-red-900/20 border border-red-600/40 rounded-xl flex items-center gap-3">
+                      <ShieldAlert className="w-5 h-5 text-red-400 shrink-0" />
+                      <p className="text-red-200 text-sm font-semibold">
+                        Payment blocked by AegisAI — high fraud risk detected
                       </p>
-                      <div className="space-y-2 text-sm bg-gray-700/40 rounded-lg p-3">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">To</span>
-                          <span className="text-white font-semibold">{recipient?.displayName}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">UPI</span>
-                          <span className="text-gray-300 font-mono text-xs">{recipient?.upiId}</span>
-                        </div>
-                        <div className="flex justify-between pt-1 border-t border-gray-600">
-                          <span className="text-gray-400">Amount</span>
-                          <span className="text-green-400 font-bold text-base">₹{parseFloat(amount || 0).toLocaleString('en-IN')}</span>
-                        </div>
-                        {note && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">Note</span>
-                            <span className="text-white">{note}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between pt-1 border-t border-gray-600">
-                          <span className="text-gray-400">Risk Score</span>
-                          <span className={`font-semibold ${
-                            (fraudVerdict?.compositeRisk || 0) >= 70 ? 'text-red-400'
-                            : (fraudVerdict?.compositeRisk || 0) >= 40 ? 'text-yellow-400'
-                            : 'text-green-400'
-                          }`}>{fraudVerdict?.compositeRisk ?? '—'}%</span>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button onClick={() => setConfirmMode(false)} variant="outline"
-                          className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-700">
-                          Cancel
-                        </Button>
-                        <Button onClick={handlePayment}
-                          className="flex-1 bg-green-600 hover:bg-green-700 font-semibold">
-                          <Send className="w-4 h-4 mr-2" /> Confirm & Send
-                        </Button>
-                      </div>
-                    </motion.div>
+                    </div>
+                  ) : recipient && amount && parseFloat(amount) > 0 ? (
+                    <RazorpayCheckout
+                      recipient={recipient}
+                      amount={parseFloat(amount)}
+                      note={note}
+                      user={user}
+                      senderUpiId={upiId}
+                      onSuccess={(data) => {
+                        setPaymentSuccess(true);
+                        setSuccessTx({ amount: data.amount, recipient: data.recipientName, upi: data.recipientUpi });
+                        setTimeout(() => {
+                          setPhoneInput('+91'); setAmount(''); setNote('');
+                          setRecipient(null); setFraudVerdict(null);
+                          setPaymentSuccess(false); setSuccessTx(null);
+                        }, 6000);
+                      }}
+                      onCancel={() => setError('')}
+                    />
                   ) : (
-                    <Button
-                      onClick={() => { setError(''); setConfirmMode(true); }}
-                      disabled={!recipient || !amount || parseFloat(amount) <= 0 || paymentSuccess || fraudVerdict?.verdict === 'BLOCK'}
-                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 font-semibold">
-                      <Send className="w-4 h-4 mr-2" />
-                      {fraudVerdict?.verdict === 'BLOCK' ? 'Payment Blocked by AegisAI' : 'Review & Pay'}
+                    <Button disabled className="w-full bg-blue-600/40 font-semibold cursor-not-allowed opacity-50">
+                      Enter recipient and amount to pay
                     </Button>
                   )}
                 </CardContent>
