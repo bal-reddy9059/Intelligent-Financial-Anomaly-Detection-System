@@ -34,6 +34,7 @@ import RiskScoreBlend from './components/logic/RiskScoreBlend'
 import QRPay from './components/logic/QRPay'
 import Budget from './components/logic/Budget'
 import RequestMoney from './components/logic/RequestMoney'
+import PayByPhone from './components/logic/PayByPhone'
 import AIAssistant from './components/logic/AIAssistant'
 import NotificationsCenter from './components/logic/NotificationsCenter'
 import SplitBill from './components/logic/SplitBill'
@@ -109,6 +110,7 @@ const RouteTitleUpdater = () => {
       '/retraining-readiness': 'AegisAI - Retraining Readiness',
       '/risk-score-blend': 'AegisAI - Risk Score Blend',
       '/qr-pay': 'AegisAI - QR Pay',
+      '/pay-by-phone': 'AegisAI - Pay with Phone Number',
       '/budget': 'AegisAI - Budget Tracker',
       '/request-money': 'AegisAI - Request Money',
       '/ai-assistant': 'AegisAI - AI Assistant',
@@ -180,6 +182,7 @@ const App = () => {
         <Route path="/retraining-readiness" element={<PrivateRoute element={<RetrainingReadiness />} />} />
         <Route path="/risk-score-blend" element={<PrivateRoute element={<RiskScoreBlend />} />} />
         <Route path="/qr-pay" element={<PrivateRoute element={<QRPay />} />} />
+        <Route path="/pay-by-phone" element={<PrivateRoute element={<PayByPhone />} />} />
         <Route path="/budget" element={<PrivateRoute element={<Budget />} />} />
         <Route path="/request-money" element={<PrivateRoute element={<RequestMoney />} />} />
         <Route path="/ai-assistant" element={<PrivateRoute element={<AIAssistant />} />} />

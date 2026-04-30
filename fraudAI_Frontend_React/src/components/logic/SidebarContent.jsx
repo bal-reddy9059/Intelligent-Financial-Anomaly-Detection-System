@@ -57,6 +57,7 @@ import {
   GitFork,
   HeartHandshake,
   ShieldCheck,
+  Phone,
 } from 'lucide-react';
 
 export default function SidebarContent() {
@@ -76,6 +77,7 @@ export default function SidebarContent() {
     { icon: Home,                 label: "Dashboard",          path: "/dashboard" },
     { icon: Send,                 label: "Send Money",          path: "/send-money" },
     { icon: QrCode,               label: "QR Pay",              path: "/qr-pay" },
+    { icon: Phone,                label: "Pay by Phone",        path: "/pay-by-phone" },
     { icon: HandCoins,            label: "Request Money",       path: "/request-money" },
     { icon: Wallet,               label: "Budget",              path: "/budget" },
     { icon: BotMessageSquare,     label: "AI Assistant",        path: "/ai-assistant" },

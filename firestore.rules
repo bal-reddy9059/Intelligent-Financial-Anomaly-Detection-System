@@ -82,5 +82,22 @@ service cloud.firestore {
     match /userBadges/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+
+    // Week 18 — Phone Number Index for Pay by Phone feature
+    match /phoneIndex/{phoneNumber} {
+      // Allow any logged-in user to READ (needed for phone → UPI lookup)
+      allow read: if request.auth != null;
+      // Only admin/backend can write (maintain via cloud function or manual)
+      allow write: if false;
+    }
+
+    // Week 18 — Community Watchlist for phone-based fraud detection
+    match /communityWatchlist/{phoneNumber} {
+      // Allow any logged-in user to READ (needed for trust score calculation)
+      allow read: if request.auth != null;
+      // Allow any logged-in user to flag a phone number
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+    }
   }
 }

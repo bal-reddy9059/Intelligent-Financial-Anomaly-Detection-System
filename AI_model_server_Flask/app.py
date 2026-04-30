@@ -5846,6 +5846,378 @@ def prepayment_check():
     })
 
 
+# ── Week 18: Pay with Phone Number ────────────────────────────────────────────
+@app.route('/phone-lookup', methods=['POST'])
+def phone_lookup():
+    """
+    Lookup phone number → UPI ID + display name + trust score.
+    Used for real-time recipient lookup as user types phone number.
+    
+    Request body:
+    {
+      "phoneNumber": "+919876543210",
+      "currentUserId": "uid123"
+    }
+    """
+    try:
+        import firebase_admin
+        from firebase_admin import credentials, firestore as fb_firestore
+
+        data = request.get_json(silent=True) or {}
+        phone = data.get('phoneNumber', '').strip()
+        current_uid = data.get('currentUserId', '')
+
+        if not phone or not current_uid:
+            return jsonify({"error": "phoneNumber and currentUserId required"}), 400
+
+        # Initialize Firebase if not already done
+        try:
+            fb_app = firebase_admin.get_app()
+        except ValueError:
+            # Firebase not initialized, try to initialize
+            try:
+                cred = credentials.Certificate('path/to/serviceAccountKey.json')
+                fb_app = firebase_admin.initialize_app(cred)
+            except Exception as e:
+                # If Firebase can't be initialized, return mock response for demo
+                return jsonify({
+                    "found": False,
+                    "message": "Phone lookup service unavailable (Firebase not configured on server)",
+                    "suggestion": "Configure Firebase Admin SDK on the Flask server"
+                }), 503
+
+        # Query phoneIndex collection in Firestore
+        db = fb_firestore.client()
+        doc_ref = db.collection('phoneIndex').document(phone)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return jsonify({
+                "found": False,
+                "phoneNumber": phone,
+                "message": "No AegisAI account linked to this number"
+            }), 200
+
+        data_dict = doc.to_dict()
+        upi_id = data_dict.get('upiId', '')
+        display_name = data_dict.get('displayName', 'Unknown User')
+        recipient_uid = data_dict.get('uid', '')
+
+        # Calculate trust score based on:
+        # 1. Phone number age in Firestore
+        # 2. Transaction history with this contact
+        # 3. Community reports/flags
+        trust_score = 85  # Default trust score
+
+        # Check if this number is in watchlist (flagged by community)
+        watchlist_doc = db.collection('communityWatchlist').document(phone)
+        if watchlist_doc.get().exists:
+            watchlist_data = watchlist_doc.get().to_dict()
+            flags = watchlist_data.get('flags', 0)
+            trust_score = max(10, 85 - (flags * 5))  # Each flag reduces trust by 5
+
+        # Get phone number age
+        user_doc = db.collection('users').document(recipient_uid)
+        if user_doc.get().exists:
+            user_data = user_doc.get().to_dict()
+            phone_added_at = user_data.get('phoneIndexedAt', None)
+            if phone_added_at:
+                from datetime import datetime, timedelta
+                now = datetime.utcnow()
+                age_days = (now - phone_added_at.replace(tzinfo=None)).days if hasattr(phone_added_at, 'replace') else 0
+                # Phones in system longer = more trustworthy
+                if age_days > 365:
+                    trust_score = min(95, trust_score + 10)
+                elif age_days > 30:
+                    trust_score = min(90, trust_score + 5)
+
+        return jsonify({
+            "found": True,
+            "phoneNumber": phone,
+            "upiId": upi_id,
+            "displayName": display_name,
+            "trustScore": trust_score,
+            "trustBadge": "verified" if trust_score >= 80 else "caution" if trust_score >= 50 else "watch",
+            "recipientUid": recipient_uid,
+        }), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "message": "Phone lookup failed"
+        }), 500
+
+
+@app.route('/phone-pay/check', methods=['POST'])
+def phone_pay_check():
+    """
+    Fraud check specifically for phone-number-based payments.
+    Enhanced pre-payment shield tailored for phone payment risks.
+    
+    Request body:
+    {
+      "phoneNumber": "+919876543210",
+      "recipientUpi": "user@aegis",
+      "amount": 5000,
+      "transactions": [...],
+      "allKnownPhones": [...],
+      "trustScore": 85
+    }
+    """
+    try:
+        from datetime import datetime
+        import math
+
+        data = request.get_json(silent=True) or {}
+        phone = data.get('phoneNumber', '')
+        recipient_upi = data.get('recipientUpi', '')
+        amount = float(data.get('amount', 0))
+        transactions = data.get('transactions', [])
+        all_known_phones = data.get('allKnownPhones', [])
+        recipient_trust_score = float(data.get('trustScore', 85))
+
+        now = datetime.now()
+        hour = now.hour
+        dow = now.weekday()
+
+        # RISK FACTORS FOR PHONE PAYMENTS (different from UPI payments)
+
+        # 1. First-time phone payment risk (phone numbers easier to spoof)
+        prior_phone_txs = [t for t in transactions if t.get('paymentMethod') == 'phone' and t.get('senderPhone') == phone]
+        is_first_time_phone = len(prior_phone_txs) == 0
+        first_time_risk = 70 if is_first_time_phone else 10
+
+        # 2. Phone spoofing check - Levenshtein distance to known contacts
+        def levenshtein(a, b):
+            if not a or not b: return 99
+            m, n = len(a), len(b)
+            dp = [[0] * (n + 1) for _ in range(m + 1)]
+            for i in range(m + 1): dp[i][0] = i
+            for j in range(n + 1): dp[0][j] = j
+            for i in range(1, m + 1):
+                for j in range(1, n + 1):
+                    dp[i][j] = dp[i-1][j-1] if a[i-1] == b[j-1] else 1 + min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
+            return dp[m][n]
+
+        min_dist, closest_phone = 99, ''
+        for p in all_known_phones:
+            if p == phone: continue
+            d = levenshtein(p, phone)
+            if d < min_dist: min_dist, closest_phone = d, p
+        is_spoof_suspect = 0 < min_dist <= 3  # Looser threshold for phone numbers
+
+        # 3. Amount vs contact's history
+        amounts_to_phone = [float(t.get('amount', 0)) for t in prior_phone_txs if t.get('amount')]
+        if amounts_to_phone:
+            avg_amount = sum(amounts_to_phone) / len(amounts_to_phone)
+            std_amount = math.sqrt(sum((a - avg_amount)**2 for a in amounts_to_phone) / len(amounts_to_phone)) if len(amounts_to_phone) > 1 else 1
+            amount_z_score = (amount - avg_amount) / max(std_amount, 1)
+            amount_risk = 80 if amount_z_score > 2.5 else (45 if amount_z_score > 1.5 else 15)
+        else:
+            amount_risk = 40  # Higher base risk for first-time amount
+
+        # 4. Contact frequency (how often user pays this number)
+        contact_freq = len(prior_phone_txs)
+        freq_risk = 70 if contact_freq == 0 else (40 if contact_freq < 3 else 10)
+
+        # 5. Recipient trust score (from community/system)
+        trust_risk = max(5, 100 - recipient_trust_score)  # Inverse of trust score
+
+        # 6. Payment velocity
+        recent_phone_txs = sum(1 for t in transactions if t.get('paymentMethod') == 'phone' and 
+                               ((now - datetime.fromisoformat(str(t.get('timestamp', ''))[:19])).total_seconds() < 1800 if t.get('timestamp') else False))
+        velocity_risk = 75 if recent_phone_txs >= 2 else 5
+
+        # 7. Time-of-day risk (slightly higher for phone than UPI)
+        odd_hour_risk = 85 if hour <= 5 else (60 if hour >= 22 else 20)
+
+        # Build factor list
+        factors = [
+            {
+                "key": "first_time",
+                "label": "First-Time Phone Payment",
+                "score": first_time_risk,
+                "risk": "high" if first_time_risk >= 70 else "medium" if first_time_risk >= 40 else "safe",
+                "detail": "Phone number payments have higher spoofing risk. First time with this contact." if is_first_time_phone else f"Known contact - {contact_freq} prior transactions"
+            },
+            {
+                "key": "spoof",
+                "label": "Phone Spoofing Check",
+                "score": 85 if is_spoof_suspect else 5,
+                "risk": "high" if is_spoof_suspect else "safe",
+                "detail": f"Similar to known number: {closest_phone} (distance: {min_dist})" if is_spoof_suspect else "Number does not match known contacts"
+            },
+            {
+                "key": "amount",
+                "label": "Amount Anomaly",
+                "score": amount_risk,
+                "risk": "high" if amount_risk >= 70 else "medium" if amount_risk >= 40 else "safe",
+                "detail": f"Amount ₹{amount} is unusual for this contact"
+            },
+            {
+                "key": "contact_trust",
+                "label": "Recipient Trust Score",
+                "score": trust_risk,
+                "risk": "high" if trust_risk >= 60 else "medium" if trust_risk >= 30 else "safe",
+                "detail": f"Community trust score: {recipient_trust_score}/100"
+            },
+            {
+                "key": "velocity",
+                "label": "Payment Velocity",
+                "score": velocity_risk,
+                "risk": "high" if velocity_risk >= 70 else "safe",
+                "detail": f"{recent_phone_txs} phone payments in last 30 minutes"
+            },
+            {
+                "key": "time",
+                "label": "Time of Day",
+                "score": odd_hour_risk,
+                "risk": "high" if odd_hour_risk >= 80 else "medium" if odd_hour_risk >= 50 else "safe",
+                "detail": "Unusual transaction time"
+            }
+        ]
+
+        high_count = sum(1 for f in factors if f['risk'] == 'high')
+        composite = round(sum(f['score'] for f in factors) / len(factors))
+        
+        # Stricter thresholds for phone payments (higher risk inherently)
+        if high_count >= 3 or composite >= 75:
+            verdict = "BLOCK"
+        elif high_count >= 2 or composite >= 55:
+            verdict = "CAUTION"
+        elif high_count >= 1 or composite >= 40:
+            verdict = "REVIEW"
+        else:
+            verdict = "ALLOW"
+
+        confidence = round(60 + abs(50 - composite) * 0.8)
+
+        return jsonify({
+            "phoneNumber": phone,
+            "recipientUpi": recipient_upi,
+            "amount": amount,
+            "verdict": verdict,
+            "compositeRisk": composite,
+            "confidence": confidence,
+            "factors": factors,
+            "isFirstTime": is_first_time_phone,
+            "spoofDetected": is_spoof_suspect,
+            "closestPhone": closest_phone if is_spoof_suspect else None,
+            "summary": (
+                f"🚫 BLOCK: {high_count} high-risk factors. Do not proceed. Contact recipient through other means to verify."
+                if verdict == "BLOCK" else
+                f"⚠️ CAUTION: Verify recipient identity before sending. Multiple risk signals detected."
+                if verdict == "CAUTION" else
+                f"👀 REVIEW: Extra caution recommended. Please confirm the phone number is correct."
+                if verdict == "REVIEW" else
+                f"✅ ALLOW: Safe to proceed. No significant risk factors detected."
+            ),
+        }), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "message": "Phone payment fraud check failed"
+        }), 500
+
+
+@app.route('/phone-pay/history', methods=['GET'])
+def phone_pay_history():
+    """
+    Get recent phone-number-based transactions for the current user.
+    Useful for showing transaction patterns and frequency.
+    
+    Query params:
+    - userId: current user ID (required)
+    - limit: max records to return (default 50)
+    - days: look back N days (default 90)
+    """
+    try:
+        import firebase_admin
+        from firebase_admin import credentials, firestore as fb_firestore
+        from datetime import datetime, timedelta
+
+        user_id = request.args.get('userId', '')
+        limit = int(request.args.get('limit', 50))
+        days = int(request.args.get('days', 90))
+
+        if not user_id:
+            return jsonify({"error": "userId query parameter required"}), 400
+
+        # Initialize Firebase if not already done
+        try:
+            fb_app = firebase_admin.get_app()
+        except ValueError:
+            try:
+                cred = credentials.Certificate('path/to/serviceAccountKey.json')
+                fb_app = firebase_admin.initialize_app(cred)
+            except Exception as e:
+                return jsonify({
+                    "error": "Firebase not configured",
+                    "message": "Phone payment history unavailable"
+                }), 503
+
+        db = fb_firestore.client()
+        
+        # Query transactions collection for phone-based payments
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        transactions_ref = db.collection('transactions')
+        query = (transactions_ref
+                 .where('userId', '==', user_id)
+                 .where('paymentMethod', '==', 'phone')
+                 .where('timestamp', '>=', start_date)
+                 .order_by('timestamp', direction=fb_firestore.Query.DESCENDING)
+                 .limit(limit))
+        
+        docs = query.stream()
+        transactions = []
+        
+        for doc in docs:
+            tx_data = doc.to_dict()
+            transactions.append({
+                'id': doc.id,
+                'timestamp': tx_data.get('timestamp').isoformat() if hasattr(tx_data.get('timestamp'), 'isoformat') else str(tx_data.get('timestamp')),
+                'phoneNumber': tx_data.get('senderPhone', ''),
+                'recipientName': tx_data.get('recipientName', ''),
+                'recipientUpi': tx_data.get('receiverUPI', ''),
+                'amount': tx_data.get('amount', 0),
+                'status': tx_data.get('status', 'unknown'),
+                'fraudVerdict': tx_data.get('fraudVerdict', 'UNKNOWN'),
+            })
+
+        # Aggregate statistics
+        total_amount = sum(float(t.get('amount', 0)) for t in transactions)
+        unique_contacts = len(set(t.get('phoneNumber', '') for t in transactions))
+        high_risk_count = sum(1 for t in transactions if t.get('fraudVerdict') == 'HIGH_RISK')
+
+        return jsonify({
+            "userId": user_id,
+            "lookbackDays": days,
+            "transactions": transactions,
+            "totalRecords": len(transactions),
+            "statistics": {
+                "totalAmount": total_amount,
+                "averageAmount": total_amount / len(transactions) if transactions else 0,
+                "uniquePhoneContacts": unique_contacts,
+                "highRiskTransactions": high_risk_count,
+                "period": f"Last {days} days"
+            }
+        }), 200
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "message": "Failed to retrieve phone payment history"
+        }), 500
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == '__main__':
     import logging
