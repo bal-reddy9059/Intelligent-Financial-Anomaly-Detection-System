@@ -6734,8 +6734,8 @@ if __name__ == '__main__':
     print("═" * 52 + "\n")
 
     app.run(
-        host='127.0.0.1',
-        port=5000,
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 5000)),
         debug=debug_mode,
         use_reloader=debug_mode,
     )
