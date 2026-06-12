@@ -21,7 +21,7 @@ export default defineConfig({
     include: ['path-browserify', 'url', 'source-map-js'], // Include the browser-compatible versions for Vite to handle
   },
   build: {
-    outDir: '../AI_model_server_Flask/static',
+    outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
   },
