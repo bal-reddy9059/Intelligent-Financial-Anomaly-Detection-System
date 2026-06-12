@@ -102,7 +102,7 @@ const Header = ({ user }) => {
   /* API health */
   useEffect(() => {
     const check = () => {
-      axios.get(`${API}/`, { timeout: 3000 })
+      axios.get(`${API}/health`, { timeout: 5000 })
         .then(() => setApiOnline(true))
         .catch(() => setApiOnline(false));
     };
