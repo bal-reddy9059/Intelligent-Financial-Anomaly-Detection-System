@@ -21,7 +21,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__, static_folder='static', static_url_path='')
-CORS(app)
+CORS(app, origins="*", supports_credentials=True)
 Swagger(app, template=SWAGGER_TEMPLATE, config=SWAGGER_CONFIG)
 
 # ── Model Loading ──────────────────────────────────────────────────────────────
