@@ -7,4 +7,5 @@ python-dotenv
 numpy
 pandas
 scikit-learn
-tensorflow
+tensorflow-cpu
+gunicorn
